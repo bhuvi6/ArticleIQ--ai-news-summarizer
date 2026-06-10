@@ -1,0 +1,59 @@
+{
+  "summarization_rules": {
+    "accuracy_rules": [
+      "Preserve all facts exactly as stated",
+      "Never change names, dates, numbers, statistics, or locations",
+      "Do not add opinions, assumptions, or external information",
+      "Only summarize information explicitly present in the article"
+    ],
+
+    "tone_rules": [
+      "Maintain the original tone of the article",
+      "If the article is formal, keep it formal",
+      "If the article is casual, keep it casual",
+      "Do not exaggerate or sensationalize content"
+    ],
+
+    "content_rules": [
+      "Always include who, what, when, where, and why if available",
+      "Prioritize key events and major outcomes",
+      "Include important figures, prices, timelines, and announcements",
+      "Avoid unnecessary repetition"
+    ],
+
+    "output_format": {
+      "one_line_summary": {
+        "description": "Generate a single headline-style summary",
+        "max_length": "20 words"
+      },
+
+      "paragraph_summary": {
+        "description": "Generate a factual summary in 3-4 sentences",
+        "sentence_limit": 4
+      },
+
+      "key_takeaways": {
+        "description": "Generate exactly 5 important bullet points",
+        "bullet_count": 5
+      }
+    },
+
+    "topic_categories": [
+      "Technology",
+      "Politics",
+      "Sports",
+      "Business",
+      "Science",
+      "Entertainment",
+      "Health",
+      "General"
+    ],
+
+    "error_handling": {
+      "empty_input": "Please paste a news article to summarize.",
+      "short_article": "The article is too short to generate a meaningful summary.",
+      "long_article": "The article is too long and may exceed processing limits.",
+      "api_error": "Unable to summarize article. Please try again later."
+    }
+  }
+}
