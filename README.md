@@ -1,336 +1,196 @@
-## 🌐 Live Demo
+# 🧠 ArticleIQ — AI-Powered News Article Summarizer
 
-Try ArticleIQ live here:
+> **Multilingual news summarization platform built with Streamlit · Groq · Llama 3.3 70B**
 
-🔗 https://articleiq-ai-news.streamlit.app/
-```
+**ArticleIQ** transforms lengthy news articles into fast, factual, multilingual summaries — so you stay informed without reading everything. Paste any article or drop a URL to instantly get headline summaries, paragraph briefs, key takeaways, AI insights, and factual accuracy analysis.
 
-
-
-
-
-
-'''
-# 🧠 ArticleIQ — AI News Article Summarizer
-
-> **Multilingual AI-powered news summarization platform built using Streamlit + Groq + Llama 3.3 70B**
-
-**ArticleIQ** helps users quickly understand lengthy news articles without reading the full content. Paste an article or fetch content directly from a URL and instantly receive **headline summaries, paragraph briefs, key takeaways, AI insights, and factual accuracy analysis** in multiple languages.
+🔗 **Live Demo:** [articleiq-ai-news.streamlit.app](https://articleiq-ai-news.streamlit.app/)
+📦 **GitHub:** [github.com/Bhuvi-123/articleiq-ai-news-summarizer](https://github.com/Bhuvi-123/articleiq-ai-news-summarizer)
 
 ---
 
-## 🚀 Features
+## ✨ Features
 
 ### 📰 Multi-Level Summarization
-
-Generate structured summaries in **three levels**:
-
-* **Headline Summary** → One-line quick understanding
-* **Paragraph Summary** → Concise factual overview
-* **Key Takeaways** → Important insights in bullet points
+Three structured summary layers for every article:
+- **Headline Summary** — One-line instant understanding
+- **Paragraph Summary** — Concise, factual overview
+- **Key Takeaways** — Most important points in bullet form
 
 ---
 
-### ⚡ Real Summary Modes
+### ⚡ Summary Modes
 
-Choose how detailed the summary should be:
-
-| Mode        | Description                           |
-| ----------- | ------------------------------------- |
-| ⚡ Quick     | Short summary + 3 concise takeaways   |
-| 📄 Standard | Balanced summary + 5 takeaways        |
-| 🔍 Detailed | Richer explanation + 7 deep takeaways |
+| Mode | Description |
+|------|-------------|
+| ⚡ Quick | Short summary + 3 concise takeaways |
+| 📄 Standard | Balanced summary + 5 takeaways |
+| 🔍 Detailed | In-depth explanation + 7 deep takeaways |
 
 ---
 
 ### 🌍 Multilingual Support
-
 Generate summaries in:
 
-* 🇬🇧 English
-* 🇮🇳 Telugu
-* 🇮🇳 Hindi
-* 🇮🇳 Tamil
-* 🇫🇷 French
+| Language | |
+|----------|-|
+| 🇬🇧 English | 🇮🇳 Telugu |
+| 🇮🇳 Hindi | 🇮🇳 Tamil |
+| 🇫🇷 French | |
 
-The system preserves:
-
-✅ Names
-✅ Dates
-✅ Numbers
-✅ Facts
-✅ Original meaning
-
-while translating naturally.
+All translations preserve **names, dates, numbers, facts, and original meaning**.
 
 ---
 
 ### 🔗 URL-Based Article Fetching
-
-Instead of manually copy-pasting articles:
-
-Paste a URL like:
-
-```txt
+Skip the copy-paste. Just drop a URL:
+```
 https://newswebsite.com/article
 ```
-
-**ArticleIQ** automatically:
-
-1. Fetches article content
-2. Extracts readable text
-3. Generates an AI summary instantly
+ArticleIQ will automatically fetch the page, extract readable text, and generate a summary.
 
 ---
 
 ### 🧠 AI Article Insights
+Get deeper intelligence beyond the summary:
 
-Get deeper intelligence about articles:
-
-### Tone Detection
-
-Examples:
-
-* Informative
-* Serious
-* Casual
-* Analytical
-
-### Sentiment Analysis
-
-* Positive
-* Neutral
-* Negative
-
-### Complexity Detection
-
-* Beginner
-* Intermediate
-* Advanced
-
-### Target Audience Identification
-
-Examples:
-
-* Students
-* Researchers
-* Professionals
-* General Readers
+- **Tone Detection** — Informative / Serious / Casual / Analytical
+- **Sentiment Analysis** — Positive / Neutral / Negative
+- **Complexity Level** — Beginner / Intermediate / Advanced
+- **Target Audience** — Students / Researchers / Professionals / General Readers
 
 ---
 
 ### 📊 Accuracy Score
+Verifies that summaries stay true to the original article by checking:
+- Numbers & statistics
+- Dates
+- Named entities
 
-Ensures summaries preserve factual information.
-
-Checks:
-
-* Numbers
-* Dates
-* Named Entities
-
-Example:
-
-```txt
-Accuracy Score: 92%
-```
-
-with detailed breakdown.
+> Example: **Accuracy Score: 92%** with a detailed breakdown
 
 ---
 
-### 📋 Copy Summary Buttons
-
-Instantly copy:
-
-* Headline Summary
-* Paragraph Summary
-* Key Takeaways
-
-with one click.
+### 📋 One-Click Copy
+Copy your **Headline Summary**, **Paragraph Summary**, or **Key Takeaways** to clipboard with a single button.
 
 ---
 
 ### 📄 PDF Export
-
-Download generated summaries as PDF including:
-
-* Summary
-* Key Takeaways
-* Metadata
-* AI Insights
-* Accuracy Score
+Download a complete summary report as a PDF, including:
+- Summary content
+- Key takeaways
+- Article metadata
+- AI insights
+- Accuracy score
 
 ---
 
 ### 🕘 Summary History
-
-View and reload previously generated summaries instantly from the sidebar.
+Previously generated summaries are saved in the sidebar — reload any of them instantly without re-summarizing.
 
 ---
 
 ### 🎨 Professional UI
-
-Modern white + green interface with:
-
-* Premium card design
-* Metadata dashboard
-* AI insights section
-* Responsive layout
-* Clean typography
-
-```md
-## 🌐 Live Demo
-
-Try ArticleIQ live here:
-
-🔗 https://articleiq-ai-news.streamlit.app/
-```
+Clean, modern interface featuring:
+- White + green design system
+- Premium card layout
+- Metadata dashboard
+- AI insights panel
+- Responsive, readable typography
 
 ---
 
 ## 🛠 Tech Stack
 
-### Frontend
-
-* **Streamlit**
-* Custom Internal CSS
-
-### Backend
-
-* **Python**
-
-### AI Model
-
-* **Groq API**
-* **Llama 3.3 70B Versatile**
-
-### Libraries Used
-
-* `streamlit`
-* `groq`
-* `python-dotenv`
-* `reportlab`
-* `requests`
-* `beautifulsoup4`
+| Layer | Technology |
+|-------|------------|
+| Frontend | Streamlit + Custom CSS |
+| Backend | Python |
+| AI Model | Groq API — Llama 3.3 70B Versatile |
+| PDF Generation | ReportLab |
+| Web Scraping | Requests + BeautifulSoup4 |
 
 ---
 
 ## 📂 Project Structure
 
-```txt
+```
 ArticleIQ/
-│── app.py
-│── .env
-│── .gitignore
-│── requirements.txt
-│── README.md
-│── summarization_rules.json
-│
-├── utils/
-│   ├── summarizer.py
-│   ├── metadata.py
-│   ├── article_insights.py
-│   ├── accuracy_checker.py
-│   ├── history_manager.py
-│   └── pdf_export.py
+├── app.py
+├── .env
+├── .gitignore
+├── requirements.txt
+├── README.md
+├── summarization_rules.json
+└── utils/
+    ├── summarizer.py
+    ├── metadata.py
+    ├── article_insights.py
+    ├── accuracy_checker.py
+    ├── history_manager.py
+    └── pdf_export.py
 ```
 
 ---
 
 ## ⚙️ Installation & Setup
 
-### 1️⃣ Clone Repository
-
+### 1. Clone the Repository
 ```bash
 git clone https://github.com/Bhuvi-123/articleiq-ai-news-summarizer.git
-```
-
-### 2️⃣ Move Into Project Folder
-
-```bash
 cd articleiq-ai-news-summarizer
 ```
 
-### 3️⃣ Install Requirements
-
+### 2. Install Dependencies
 ```bash
 pip install -r requirements.txt
-```
-
-### 4️⃣ Install PDF Support
-
-```bash
 pip install reportlab
 ```
 
-### 5️⃣ Add API Key
-
-Create a `.env` file:
-
-```env
+### 3. Add Your API Key
+Create a `.env` file in the root directory:
+```
 GROQ_API_KEY=your_api_key_here
 ```
 
----
-
-## ▶️ Run the Application
-
+### 4. Run the App
 ```bash
 streamlit run app.py
 ```
-
-The application will automatically open in your browser.
-
----
-
-## 📸 Screenshots
-
-### Home Interface
-
-*Add screenshot here*
-
-### Generated Summary
-
-*Add screenshot here*
-
-### AI Insights Dashboard
-
-*Add screenshot here*
+The app will open automatically in your browser.
 
 ---
 
-## 👨‍💻 Team Members
+## 👨‍💻 Team
 
-| Name                   | Role                 |
-| ---------------------- | -------------------- |
-| **V. Prasanna**        | Prompt Engineering   |
-| **A. Kedareswara Rao** | Data & Rules         |
-| **V. Bhuvaneswari**    | Backend / API        |
-| **K. Sai Tejesh**      | Testing & Deployment |
-| **S. Veera Mallesh**   | UI / Frontend        |
+| Name | Role |
+|------|------|
+| V. Prasanna | Prompt Engineering |
+| A. Kedareswara Rao | Data & Rules |
+| V. Bhuvaneswari | Backend / API Integration |
+| K. Sai Tejesh | Testing & Deployment |
+| S. Veera Mallesh | UI / Frontend |
 
 ---
 
-## 🔮 Future Improvements
+## 🔮 Roadmap
 
-* 🎙 Voice Summary
-* 🌙 Dark Mode
-* 📰 Compare Multiple Articles
-* 🛡 Fake News Risk Detection
-* 📈 Trending Topics Dashboard
-* 🔍 Bias Detection
+- [ ] 🎙 Voice Summary
+- [ ] 🌙 Dark Mode
+- [ ] 📰 Multi-Article Comparison
+- [ ] 🛡 Fake News Risk Detection
+- [ ] 📈 Trending Topics Dashboard
+- [ ] 🔍 Bias Detection
 
 ---
 
 ## 💡 Why ArticleIQ?
 
-**ArticleIQ** transforms lengthy, information-heavy articles into **fast, factual, multilingual summaries** — helping users consume news smarter, faster, and more efficiently.
-
-Whether you're a student, researcher, working professional, or casual reader, ArticleIQ helps you stay informed without spending time reading entire articles.
+News is overwhelming. ArticleIQ cuts through the noise — giving you the facts, fast, in your language. Whether you're a student, researcher, professional, or casual reader, ArticleIQ helps you stay informed without spending hours reading full articles.
 
 ---
 
 ## ⭐ Support the Project
 
-If you found this project useful, consider giving it a **star ⭐ on GitHub**.
+If you found this useful, drop a ⭐ on [GitHub](https://github.com/Bhuvi-123/articleiq-ai-news-summarizer) — it really helps!
