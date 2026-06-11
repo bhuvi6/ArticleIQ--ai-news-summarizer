@@ -10,7 +10,7 @@ Try ArticleIQ live here:
 
 
 
-
+'''
 # 🧠 ArticleIQ — AI News Article Summarizer
 
 > **Multilingual AI-powered news summarization platform built using Streamlit + Groq + Llama 3.3 70B**
