@@ -1,10 +1,11 @@
-```md
-<p align="center">
-  <a href="https://articleiq-ai-news.streamlit.app/">
-    <img src="https://img.shields.io/badge/🚀%20Live%20Demo-ArticleIQ-success?style=for-the-badge">
-  </a>
-</p>
+## 🌐 Live Demo
+
+Try ArticleIQ live here:
+
+🔗 https://articleiq-ai-news.streamlit.app/
 ```
+
+
 
 
 
