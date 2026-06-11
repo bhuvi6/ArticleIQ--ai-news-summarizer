@@ -1,6 +1,5 @@
+from bs4 import BeautifulSoup
 import streamlit as st
-import urllib.request
-import urllib.error
 import re
 import json
 import io
@@ -9,6 +8,7 @@ from PIL import Image
 from utils.summarizer import generate_summary
 from utils.metadata import get_word_count, get_reading_time, detect_topic
 from utils.article_insights import generate_article_insights
+import requests
 
 # ── Page Config ────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -16,12 +16,22 @@ st.set_page_config(
     page_icon="🟢",
     layout="wide"
 )
-logo = Image.open("assets/logo.png")
+
+try:
+    logo = Image.open("assets/logo.png")
+except Exception:
+    logo = None
+
 # ── Session State Init ─────────────────────────────────────────────────────────
 if "history" not in st.session_state:
     st.session_state.history = []
 if "current_summary_data" not in st.session_state:
     st.session_state.current_summary_data = None
+if "fetched_article" not in st.session_state:
+    st.session_state.fetched_article = ""
+if "active_input_source" not in st.session_state:
+    # "text" or "url" — tracks which source to use when generating
+    st.session_state.active_input_source = "text"
 
 # ── CSS ────────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -96,12 +106,6 @@ html, body { font-family: 'Inter', sans-serif; background-color: #F8FAFC; color:
 /* HISTORY */
 .hist-item { background:#FFFFFF; border:1px solid #E5E7EB; border-radius:10px; padding:0.8rem 1rem; margin-bottom:0.5rem; cursor:pointer; transition:all 0.15s; font-size:0.83rem; color:#374151; }
 .hist-item:hover { border-color:#16A34A; box-shadow:0 2px 8px rgba(22,163,74,0.1); }
-.hist-topic { font-family:'DM Mono',monospace; font-size:0.62rem; color:#16A34A; letter-spacing:0.1em; text-transform:uppercase; margin-bottom:3px; }
-.hist-title { font-weight:600; color:#111827; font-size:0.85rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.hist-time { font-size:0.7rem; color:#9CA3AF; margin-top:3px; }
-
-/* COPY BTNS */
-.copy-btn-row { display:flex; gap:8px; margin-bottom:0.6rem; flex-wrap:wrap; }
 
 /* MODE BADGE */
 .mode-badge { display:inline-flex; align-items:center; gap:6px; font-family:'DM Mono',monospace; font-size:0.65rem; letter-spacing:0.12em; text-transform:uppercase; background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE; padding:4px 10px; border-radius:100px; margin-bottom:0.8rem; }
@@ -116,6 +120,11 @@ hr { border-color:#E5E7EB !important; }
 .stTabs [data-baseweb="tab-list"] { gap:0.5rem; background:transparent; border-bottom:1px solid #E5E7EB; }
 .stTabs [data-baseweb="tab"] { background:#F9FAFB; border:1px solid #E5E7EB; border-bottom:none; border-radius:8px 8px 0 0; font-size:0.85rem; font-weight:600; color:#6B7280; padding:0.5rem 1.2rem; }
 .stTabs [aria-selected="true"] { background:#FFFFFF; color:#16A34A; border-color:#BBF7D0; border-bottom:2px solid #16A34A; }
+
+/* SOURCE INDICATOR */
+.source-badge { display:inline-flex; align-items:center; gap:6px; font-size:0.78rem; font-weight:600; padding:4px 12px; border-radius:100px; margin-top:0.5rem; }
+.source-url  { background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE; }
+.source-text { background:#F0FDF4; color:#166534; border:1px solid #BBF7D0; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -137,28 +146,154 @@ function copyText(text) {
 # ── HELPERS ────────────────────────────────────────────────────────────────────
 
 def fetch_article_from_url(url: str) -> str:
-    """Fetch and extract article text from a URL using stdlib only."""
-    try:
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; ArticleIQ/1.0)"}
+    """
+    Fetch and extract article text from a URL using multiple strategies.
+    Handles paywalled/JS-heavy sites as gracefully as possible.
+    """
+    # Rotate through several realistic User-Agent strings
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    ]
+
+    last_error = ""
+    html = ""
+
+    for ua in user_agents:
+        try:
+            headers = {
+                "User-Agent": ua,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+                "Cache-Control": "no-cache",
+                "Referer": "https://www.google.com/",
+            }
+            response = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
+            response.raise_for_status()
+            html = response.text
+            break
+        except requests.exceptions.Timeout:
+            last_error = "Request timed out (15 s). The site may be slow or blocking scrapers."
+        except requests.exceptions.HTTPError as e:
+            code = e.response.status_code
+            if code == 403:
+                last_error = f"HTTP 403 — The website blocked access (anti-scraping protection)."
+            elif code == 404:
+                last_error = "HTTP 404 — Article not found at this URL."
+            elif code == 429:
+                last_error = "HTTP 429 — Too many requests. Try again in a moment."
+            else:
+                last_error = f"HTTP {code} — Could not access this URL."
+            break   # No point retrying on HTTP errors
+        except requests.exceptions.ConnectionError:
+            last_error = "Connection error — could not reach the website."
+            break
+        except Exception as e:
+            last_error = str(e)
+
+    if not html:
+        return f"ERROR: {last_error}"
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    # ── Remove noise tags ──────────────────────────────────────────────────────
+    for tag in soup(["script", "style", "nav", "footer", "header", "aside",
+                     "noscript", "iframe", "figure", "figcaption",
+                     "button", "form", "input", "select"]):
+        tag.decompose()
+
+    # ── Multi-strategy extraction (most specific → most general) ──────────────
+    def paras_from(element) -> str:
+        if element is None:
+            return ""
+        parts = []
+        # grab <p> tags AND bare text nodes in <div>s (BBC mediacentre style)
+        for p in element.find_all(["p", "div"], recursive=True):
+            txt = p.get_text(" ", strip=True)
+            # Skip tiny fragments, nav items, copyright notices
+            if len(txt) > 40 and not any(
+                kw in txt.lower() for kw in ["cookie", "subscribe", "sign in",
+                                              "log in", "advertisement", "©"]
+            ):
+                parts.append(txt)
+        return " ".join(parts)
+
+    article_text = ""
+
+    # Strategy 1: <article> semantic tag
+    article_tag = soup.find("article")
+    if article_tag:
+        article_text = paras_from(article_tag)
+
+    # Strategy 2: common CMS content wrappers
+    if len(article_text) < 300:
+        for selector in [
+            {"class": re.compile(r"article[_-]?(body|content|text)", re.I)},
+            {"class": re.compile(r"(story|post|entry)[_-]?(body|content|text)", re.I)},
+            {"class": re.compile(r"(main|page)[_-]?content", re.I)},
+            {"id":    re.compile(r"(article|story|content|main)[_-]?(body|text|content)?", re.I)},
+            {"role":  "main"},
+            {"itemprop": "articleBody"},
+        ]:
+            el = soup.find(True, selector)
+            if el:
+                candidate = paras_from(el)
+                if len(candidate) > len(article_text):
+                    article_text = candidate
+                if len(article_text) > 300:
+                    break
+
+    # Strategy 3: largest text block by character count
+    if len(article_text) < 300:
+        candidates = []
+        for div in soup.find_all(["div", "section", "main"]):
+            txt = div.get_text(" ", strip=True)
+            if len(txt) > len(article_text):
+                candidates.append(txt)
+        if candidates:
+            article_text = max(candidates, key=len)
+
+    # Strategy 4: all <p> tags as last resort
+    if len(article_text) < 300:
+        article_text = " ".join(
+            p.get_text(" ", strip=True)
+            for p in soup.find_all("p")
+            if len(p.get_text(strip=True)) > 40
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            html = resp.read().decode("utf-8", errors="ignore")
 
-        # Strip scripts and styles
-        html = re.sub(r"<(script|style)[^>]*>.*?</(script|style)>", "", html, flags=re.DOTALL | re.IGNORECASE)
-        # Remove tags
-        text = re.sub(r"<[^>]+>", " ", html)
-        # Collapse whitespace
-        text = re.sub(r"\s+", " ", text).strip()
-        # Decode HTML entities
-        text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&nbsp;", " ").replace("&#39;", "'").replace("&quot;", '"')
+    # ── Clean up whitespace ────────────────────────────────────────────────────
+    article_text = re.sub(r"\s{2,}", " ", article_text).strip()
 
-        # Return first ~8000 chars (enough for summarization)
-        return text[:8000]
-    except Exception as e:
-        return f"ERROR: {str(e)}"
+    if len(article_text) < 100:
+        return (
+            "ERROR: Could not extract article text from this URL. "
+            "The page may require JavaScript, be behind a paywall, "
+            "or block automated access. Try copying and pasting the article text manually."
+        )
+
+    return article_text[:8000]
+
+
+def get_active_article() -> str:
+    """
+    Return the article text to use for summarisation.
+    Priority: URL-fetched content > pasted text.
+    Uses active_input_source to know which tab the user last acted on.
+    """
+    source = st.session_state.get("active_input_source", "text")
+    url_article  = st.session_state.get("fetched_article", "").strip()
+    text_article = st.session_state.get("article_input", "").strip()
+
+    if source == "url" and url_article:
+        return url_article
+    if text_article:
+        return text_article
+    # Fallback: whatever is available
+    return url_article or text_article
 
 
 def parse_summary(summary: str):
@@ -216,52 +351,57 @@ def parse_summary(summary: str):
 
 def compute_accuracy_score(article: str, headline: str, paragraph: str, takeaways: list) -> dict:
     """Check fact preservation: numbers, dates, named entities."""
-    # Extract numbers from article
     art_numbers = set(re.findall(r'\b\d+[\d,\.]*\b', article))
-    art_dates = set(re.findall(r'\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}(?:,\s*\d{4})?|\b\d{4}\b|\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b', article, re.IGNORECASE))
-    # Extract capitalized words (likely proper nouns)
+    art_dates   = set(re.findall(
+        r'\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|'
+        r'Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
+        r'\s+\d{1,2}(?:,\s*\d{4})?|\b\d{4}\b|\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b',
+        article, re.IGNORECASE
+    ))
     art_names = set(re.findall(r'\b[A-Z][a-z]{2,}\b', article))
 
     summary_text = f"{headline} {paragraph} {' '.join(takeaways)}"
-    sum_numbers = set(re.findall(r'\b\d+[\d,\.]*\b', summary_text))
-    sum_dates = set(re.findall(r'\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}(?:,\s*\d{4})?|\b\d{4}\b|\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b', summary_text, re.IGNORECASE))
+    sum_numbers  = set(re.findall(r'\b\d+[\d,\.]*\b', summary_text))
+    sum_dates    = set(re.findall(
+        r'\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|'
+        r'Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
+        r'\s+\d{1,2}(?:,\s*\d{4})?|\b\d{4}\b|\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b',
+        summary_text, re.IGNORECASE
+    ))
     sum_names = set(re.findall(r'\b[A-Z][a-z]{2,}\b', summary_text))
 
-    # Score each category
     def ratio(a_set, b_set):
         if not a_set:
             return 1.0
-        overlap = len(a_set & b_set)
-        return min(1.0, overlap / max(1, min(len(a_set), 5)))
+        return min(1.0, len(a_set & b_set) / max(1, min(len(a_set), 5)))
 
-    num_score = ratio(art_numbers, sum_numbers)
-    date_score = ratio(art_dates, sum_dates)
-    name_score = ratio(art_names, sum_names)
+    num_score  = ratio(art_numbers, sum_numbers)
+    date_score = ratio(art_dates,   sum_dates)
+    name_score = ratio(art_names,   sum_names)
 
     overall = int((num_score * 0.35 + date_score * 0.30 + name_score * 0.35) * 100)
-    # Clamp between 70-99 for realism (LLMs are generally good)
     overall = max(70, min(99, overall + 15))
 
     return {
         "overall": overall,
         "numbers": int(min(100, num_score * 100 + 10)),
-        "dates": int(min(100, date_score * 100 + 10)),
-        "names": int(min(100, name_score * 100 + 10)),
-        "label": "Excellent" if overall >= 90 else "Good" if overall >= 80 else "Fair"
+        "dates":   int(min(100, date_score * 100 + 10)),
+        "names":   int(min(100, name_score * 100 + 10)),
+        "label":   "Excellent" if overall >= 90 else "Good" if overall >= 80 else "Fair"
     }
 
 
 def generate_pdf_bytes(headline: str, paragraph: str, takeaways: list,
                         word_count, reading_time, topic: str,
                         insights: dict, accuracy: dict, mode: str) -> bytes:
-    """Generate a clean PDF using only stdlib (reportlab if available, else plain text)."""
+    """Generate a PDF; falls back to plain text if reportlab is unavailable."""
     try:
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.lib.units import cm
         from reportlab.lib.colors import HexColor
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, Table, TableStyle
-        from reportlab.lib.enums import TA_LEFT, TA_CENTER
+        from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
+                                        HRFlowable, Table, TableStyle)
 
         buf = io.BytesIO()
         doc = SimpleDocTemplate(buf, pagesize=A4,
@@ -273,18 +413,15 @@ def generate_pdf_bytes(headline: str, paragraph: str, takeaways: list,
         gray  = HexColor("#6B7280")
         light = HexColor("#F0FDF4")
 
-        styles = getSampleStyleSheet()
-        title_style   = ParagraphStyle("title",   fontName="Helvetica-Bold", fontSize=22, textColor=dark, leading=28, spaceAfter=4)
-        eyebrow_style = ParagraphStyle("eyebrow", fontName="Helvetica",      fontSize=8,  textColor=green, spaceAfter=6, leading=12)
-        h2_style      = ParagraphStyle("h2",      fontName="Helvetica-Bold", fontSize=12, textColor=dark, spaceBefore=14, spaceAfter=6)
+        title_style   = ParagraphStyle("title",   fontName="Helvetica-Bold", fontSize=22, textColor=dark,  leading=28, spaceAfter=4)
+        eyebrow_style = ParagraphStyle("eyebrow", fontName="Helvetica",      fontSize=8,  textColor=green, spaceAfter=6,  leading=12)
+        h2_style      = ParagraphStyle("h2",      fontName="Helvetica-Bold", fontSize=12, textColor=dark,  spaceBefore=14, spaceAfter=6)
         body_style    = ParagraphStyle("body",    fontName="Helvetica",      fontSize=10, textColor=HexColor("#374151"), leading=16, spaceAfter=4)
         bullet_style  = ParagraphStyle("bullet",  fontName="Helvetica",      fontSize=10, textColor=HexColor("#374151"), leading=16, leftIndent=14, spaceAfter=3)
-        meta_style    = ParagraphStyle("meta",    fontName="Helvetica",      fontSize=9,  textColor=gray, leading=14)
+        meta_style    = ParagraphStyle("meta",    fontName="Helvetica",      fontSize=9,  textColor=gray,  leading=14)
         small_style   = ParagraphStyle("small",   fontName="Helvetica",      fontSize=8,  textColor=gray)
 
         story = []
-
-        # Header
         story.append(Paragraph("ArticleIQ", eyebrow_style))
         story.append(Paragraph(headline or "News Summary", title_style))
         story.append(Paragraph(
@@ -295,65 +432,59 @@ def generate_pdf_bytes(headline: str, paragraph: str, takeaways: list,
         story.append(HRFlowable(width="100%", thickness=1.5, color=green))
         story.append(Spacer(1, 12))
 
-        # Metadata row
-        meta_data = [
-            [Paragraph(f"<b>{word_count}</b><br/>Words", meta_style),
-             Paragraph(f"<b>{reading_time}</b><br/>Read Time", meta_style),
-             Paragraph(f"<b>{topic}</b><br/>Topic", meta_style),
-             Paragraph(f"<b>{accuracy['overall']}%</b><br/>Accuracy", meta_style)]
-        ]
+        meta_data = [[
+            Paragraph(f"<b>{word_count}</b><br/>Words", meta_style),
+            Paragraph(f"<b>{reading_time}</b><br/>Read Time", meta_style),
+            Paragraph(f"<b>{topic}</b><br/>Topic", meta_style),
+            Paragraph(f"<b>{accuracy['overall']}%</b><br/>Accuracy", meta_style)
+        ]]
         meta_table = Table(meta_data, colWidths=[4*cm, 4*cm, 5*cm, 4*cm])
         meta_table.setStyle(TableStyle([
             ("BACKGROUND", (0,0), (-1,-1), light),
-            ("ROUNDEDCORNERS", [6]),
-            ("FONTSIZE", (0,0), (-1,-1), 9),
-            ("ALIGN", (0,0), (-1,-1), "CENTER"),
-            ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+            ("FONTSIZE",   (0,0), (-1,-1), 9),
+            ("ALIGN",      (0,0), (-1,-1), "CENTER"),
+            ("VALIGN",     (0,0), (-1,-1), "MIDDLE"),
             ("TOPPADDING", (0,0), (-1,-1), 10),
             ("BOTTOMPADDING", (0,0), (-1,-1), 10),
         ]))
         story.append(meta_table)
         story.append(Spacer(1, 16))
 
-        # Paragraph summary
-        story.append(Paragraph("📄 PARAGRAPH SUMMARY", h2_style))
+        story.append(Paragraph("PARAGRAPH SUMMARY", h2_style))
         story.append(HRFlowable(width="100%", thickness=0.5, color=HexColor("#E5E7EB")))
         story.append(Spacer(1, 6))
         story.append(Paragraph(paragraph or "—", body_style))
         story.append(Spacer(1, 14))
 
-        # Key Takeaways
-        story.append(Paragraph("📌 KEY TAKEAWAYS", h2_style))
+        story.append(Paragraph("KEY TAKEAWAYS", h2_style))
         story.append(HRFlowable(width="100%", thickness=0.5, color=HexColor("#E5E7EB")))
         story.append(Spacer(1, 6))
         for i, t in enumerate(takeaways, 1):
             story.append(Paragraph(f"{i}.  {t}", bullet_style))
         story.append(Spacer(1, 14))
 
-        # Article Insights
-        story.append(Paragraph("🧠 ARTICLE INSIGHTS", h2_style))
+        story.append(Paragraph("ARTICLE INSIGHTS", h2_style))
         story.append(HRFlowable(width="100%", thickness=0.5, color=HexColor("#E5E7EB")))
         story.append(Spacer(1, 6))
         ins_data = [
-            ["Tone", insights.get("tone", "—"), "Sentiment", insights.get("sentiment", "—")],
-            ["Complexity", insights.get("complexity", "—"), "Audience", insights.get("audience", "—")],
+            ["Tone",       insights.get("tone",       "—"), "Sentiment", insights.get("sentiment", "—")],
+            ["Complexity", insights.get("complexity", "—"), "Audience",  insights.get("audience",  "—")],
         ]
         ins_table = Table(ins_data, colWidths=[3*cm, 6*cm, 3*cm, 5*cm])
         ins_table.setStyle(TableStyle([
-            ("FONTSIZE", (0,0), (-1,-1), 9),
-            ("TEXTCOLOR", (0,0), (0,-1), green),
-            ("TEXTCOLOR", (2,0), (2,-1), green),
-            ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"),
-            ("FONTNAME", (2,0), (2,-1), "Helvetica-Bold"),
-            ("TOPPADDING", (0,0), (-1,-1), 5),
+            ("FONTSIZE",  (0,0), (-1,-1), 9),
+            ("TEXTCOLOR", (0,0), (0,-1),  green),
+            ("TEXTCOLOR", (2,0), (2,-1),  green),
+            ("FONTNAME",  (0,0), (0,-1),  "Helvetica-Bold"),
+            ("FONTNAME",  (2,0), (2,-1),  "Helvetica-Bold"),
+            ("TOPPADDING",    (0,0), (-1,-1), 5),
             ("BOTTOMPADDING", (0,0), (-1,-1), 5),
-            ("LINEBELOW", (0,0), (-1,0), 0.5, HexColor("#E5E7EB")),
+            ("LINEBELOW", (0,0), (-1,0),  0.5, HexColor("#E5E7EB")),
         ]))
         story.append(ins_table)
         story.append(Spacer(1, 14))
 
-        # Accuracy
-        story.append(Paragraph("✅ ACCURACY SCORE", h2_style))
+        story.append(Paragraph("ACCURACY SCORE", h2_style))
         story.append(HRFlowable(width="100%", thickness=0.5, color=HexColor("#E5E7EB")))
         story.append(Spacer(1, 6))
         story.append(Paragraph(
@@ -364,17 +495,18 @@ def generate_pdf_bytes(headline: str, paragraph: str, takeaways: list,
             body_style
         ))
 
-        # Footer
         story.append(Spacer(1, 20))
         story.append(HRFlowable(width="100%", thickness=0.5, color=HexColor("#E5E7EB")))
         story.append(Spacer(1, 4))
-        story.append(Paragraph("Generated by ArticleIQ · AI News Summarizer · Powered by Groq Llama 3.3 70B", small_style))
+        story.append(Paragraph(
+            "Generated by ArticleIQ · AI News Summarizer · Powered by Groq Llama 3.3 70B",
+            small_style
+        ))
 
         doc.build(story)
         return buf.getvalue()
 
     except ImportError:
-        # Fallback: plain text
         lines = [
             "ARTICLEIQ — AI NEWS SUMMARY",
             f"Generated: {datetime.now().strftime('%B %d, %Y at %H:%M')}",
@@ -448,12 +580,15 @@ with st.sidebar:
     else:
         for i, item in enumerate(reversed(st.session_state.history)):
             idx = len(st.session_state.history) - 1 - i
+            label = item["headline"][:45] + "…" if len(item["headline"]) > 45 else item["headline"]
             if st.button(
-                f"📰 {item['headline'][:45]}…" if len(item['headline']) > 45 else f"📰 {item['headline']}",
+                f"📰 {label}",
                 key=f"hist_{idx}",
                 help=f"{item['topic']} · {item['time']}"
             ):
+                # FIX: set data AND rerun so the result panel refreshes immediately
                 st.session_state.current_summary_data = item
+                st.rerun()
 
         st.markdown("<hr style='border-color:#E5E7EB;margin:1rem 0'>", unsafe_allow_html=True)
         if st.button("🗑 Clear History", key="clear_hist"):
@@ -474,6 +609,9 @@ with col_input:
             placeholder="Paste a news article here — the more text, the richer the summary…",
             key="article_input"
         )
+        # When user types here, mark text as the active source
+        if article_text.strip():
+            st.session_state.active_input_source = "text"
 
     with url_tab:
         url_input = st.text_input(
@@ -481,20 +619,46 @@ with col_input:
             placeholder="https://example.com/news/article",
             key="url_input"
         )
+
         if st.button("🔄 Fetch Article", key="fetch_btn"):
             if url_input.strip():
-                with st.spinner("Fetching article…"):
+                # Clear any previously fetched content first
+                st.session_state.fetched_article = ""
+                st.session_state.active_input_source = "text"
+                with st.spinner("Fetching article… (this may take up to 15 seconds)"):
                     fetched = fetch_article_from_url(url_input.strip())
                 if fetched.startswith("ERROR:"):
-                    st.error(f"Could not fetch article: {fetched}")
+                    # Strip the "ERROR:" prefix for a cleaner display
+                    err_msg = fetched[len("ERROR:"):].strip()
+                    st.error(f"⚠️ {err_msg}")
+                    st.info(
+                        "💡 **Tip:** Some websites (BBC, NYT, etc.) block automated access. "
+                        "Try opening the article in your browser, selecting all text (Ctrl+A), "
+                        "copying it (Ctrl+C), then pasting into the **Paste Article** tab."
+                    )
                 else:
-                    st.session_state["fetched_article"] = fetched
-                    st.success(f"✓ Fetched {len(fetched.split())} words from URL.")
+                    st.session_state.fetched_article = fetched
+                    st.session_state.active_input_source = "url"
+                    word_count_fetched = len(fetched.split())
+                    st.success(f"✅ Fetched **{word_count_fetched} words** from URL. Ready to summarise!")
             else:
                 st.warning("Please enter a URL first.")
 
-        if "fetched_article" in st.session_state and st.session_state["fetched_article"]:
-            st.text_area("Fetched content (preview)", st.session_state["fetched_article"][:500] + "…", height=120, disabled=True)
+        # Show preview only when there's fetched content
+        if st.session_state.fetched_article:
+            preview_text = st.session_state.fetched_article
+            preview = preview_text[:600] + "…" if len(preview_text) > 600 else preview_text
+            st.text_area(
+                "Fetched content (preview)",
+                value=preview,
+                height=130,
+                disabled=True,
+                key="fetched_preview"
+            )
+            st.markdown(
+                '<span class="source-badge source-url">🔗 Using URL article for next summary</span>',
+                unsafe_allow_html=True
+            )
 
 with col_side:
     st.markdown("<div style='height:2.3rem'></div>", unsafe_allow_html=True)
@@ -515,7 +679,6 @@ with col_side:
 
     st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
 
-    # Mode description
     mode_info = {
         "⚡ Quick":    "1 headline · 1-sentence brief · 3 key points",
         "📄 Standard": "1 headline · 3–4 sentence brief · 5 key points",
@@ -532,31 +695,18 @@ with col_side:
 
     run = st.button("🟢 Generate Summary", use_container_width=True, key="run_btn")
 
-# ── RESOLVE ARTICLE ───────────────────────────────────────────────────────────
-def get_active_article():
-    url_article = st.session_state.get("fetched_article", "")
-    text_article = st.session_state.get("article_input", "")
-    # Prefer whichever tab has content; URL tab overrides if freshly fetched
-    if url_article and not text_article.strip():
-        return url_article
-    if text_article.strip():
-        return text_article
-    return url_article
-
-# ── RENDER RESULT (helper so history reload works too) ────────────────────────
+# ── RENDER RESULT ─────────────────────────────────────────────────────────────
 def render_summary_data(data: dict):
-    headline   = data["headline"]
-    paragraph  = data["paragraph"]
-    takeaways  = data["takeaways"]
-    word_count = data["word_count"]
+    headline     = data["headline"]
+    paragraph    = data["paragraph"]
+    takeaways    = data["takeaways"]
+    word_count   = data["word_count"]
     reading_time = data["reading_time"]
-    topic      = data["topic"]
-    insights   = data["insights"]
-    accuracy   = data["accuracy"]
-    mode_label = data["mode"]
-    article    = data["article"]
+    topic        = data["topic"]
+    insights     = data["insights"]
+    accuracy     = data["accuracy"]
+    mode_label   = data["mode"]
 
-    # Mode badge
     st.markdown(f'<div class="mode-badge">Mode: {mode_label}</div>', unsafe_allow_html=True)
 
     # ── AI ARTICLE INSIGHTS ──
@@ -565,19 +715,19 @@ def render_summary_data(data: dict):
     with i1:
         st.markdown(f"""
         <div class="meta-card"><div class="meta-icon">🎭</div><div>
-          <div class="meta-value" style="font-size:1rem;">{insights["tone"]}</div>
+          <div class="meta-value" style="font-size:1rem;">{insights.get("tone","—")}</div>
           <div class="meta-key">Tone</div></div></div>
         <div class="meta-card"><div class="meta-icon">🧠</div><div>
-          <div class="meta-value" style="font-size:1rem;">{insights["complexity"]}</div>
+          <div class="meta-value" style="font-size:1rem;">{insights.get("complexity","—")}</div>
           <div class="meta-key">Complexity</div></div></div>
         """, unsafe_allow_html=True)
     with i2:
         st.markdown(f"""
         <div class="meta-card"><div class="meta-icon">📊</div><div>
-          <div class="meta-value" style="font-size:1rem;">{insights["sentiment"]}</div>
+          <div class="meta-value" style="font-size:1rem;">{insights.get("sentiment","—")}</div>
           <div class="meta-key">Sentiment</div></div></div>
         <div class="meta-card"><div class="meta-icon">👥</div><div>
-          <div class="meta-value" style="font-size:0.9rem;">{insights["audience"]}</div>
+          <div class="meta-value" style="font-size:0.9rem;">{insights.get("audience","—")}</div>
           <div class="meta-key">Target Audience</div></div></div>
         """, unsafe_allow_html=True)
 
@@ -611,37 +761,37 @@ def render_summary_data(data: dict):
     # ── GENERATED BRIEF ──
     st.markdown('<div class="sec-label">Generated Brief</div>', unsafe_allow_html=True)
 
-    # Headline card + copy
+    # Headline
     st.markdown(f"""
     <div class="headline-card">
       <div class="card-eyebrow">📰 Headline Summary</div>
       <div class="headline-text">{headline or "—"}</div>
     </div>
     """, unsafe_allow_html=True)
-    c1, c2 = st.columns([1, 5])
+    c1, _ = st.columns([1, 5])
     with c1:
-        if st.button("📋 Copy", key=f"copy_hl_{id(data)}", help="Copy headline"):
+        if st.button("📋 Copy", key=f"copy_hl_{data['time']}", help="Copy headline"):
             st.write(f'<script>copyText({json.dumps(headline)})</script>', unsafe_allow_html=True)
             st.toast("Headline copied!", icon="✓")
 
-    # Paragraph card + copy
+    # Paragraph
     st.markdown(f"""
     <div class="para-card">
       <div class="card-eyebrow" style="color:#6B7280;">📄 Paragraph Summary</div>
       <div class="para-text">{paragraph or "—"}</div>
     </div>
     """, unsafe_allow_html=True)
-    c1, c2 = st.columns([1, 5])
+    c1, _ = st.columns([1, 5])
     with c1:
-        if st.button("📋 Copy", key=f"copy_para_{id(data)}", help="Copy paragraph"):
+        if st.button("📋 Copy", key=f"copy_para_{data['time']}", help="Copy paragraph"):
+            st.write(f'<script>copyText({json.dumps(paragraph)})</script>', unsafe_allow_html=True)
             st.toast("Paragraph copied!", icon="✓")
 
-    # Takeaways card + copy
-    takeaways_html = ""
-    for item in takeaways:
-        takeaways_html += f'<div class="takeaway-row"><div class="tk-bullet">✓</div><span>{item}</span></div>'
-    if not takeaways_html:
-        takeaways_html = '<div class="takeaway-row"><div class="tk-bullet">—</div><span>No takeaways generated.</span></div>'
+    # Takeaways
+    takeaways_html = "".join(
+        f'<div class="takeaway-row"><div class="tk-bullet">✓</div><span>{item}</span></div>'
+        for item in takeaways
+    ) or '<div class="takeaway-row"><div class="tk-bullet">—</div><span>No takeaways generated.</span></div>'
 
     st.markdown(f"""
     <div class="takeaways-card">
@@ -649,38 +799,37 @@ def render_summary_data(data: dict):
       {takeaways_html}
     </div>
     """, unsafe_allow_html=True)
-    c1, c2 = st.columns([1, 5])
+    c1, _ = st.columns([1, 5])
     with c1:
-        if st.button("📋 Copy", key=f"copy_tk_{id(data)}", help="Copy takeaways"):
+        if st.button("📋 Copy", key=f"copy_tk_{data['time']}", help="Copy takeaways"):
+            tk_text = "\n".join(f"{i+1}. {t}" for i, t in enumerate(takeaways))
+            st.write(f'<script>copyText({json.dumps(tk_text)})</script>', unsafe_allow_html=True)
             st.toast("Takeaways copied!", icon="✓")
 
-    # ── PDF DOWNLOAD ──
+    # ── PDF EXPORT ──
     st.markdown('<div class="sec-label">Export</div>', unsafe_allow_html=True)
-    try:
-        pdf_bytes = generate_pdf_bytes(
-            headline, paragraph, takeaways,
-            word_count, reading_time, topic,
-            insights, accuracy, mode_label
-        )
-        fname = f"articleiq_{topic.lower().replace(' ','_')}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
-        mime  = "application/pdf"
-    except Exception:
-        pdf_bytes = generate_pdf_bytes.__wrapped__(headline, paragraph, takeaways, word_count, reading_time, topic, insights, accuracy, mode_label) if hasattr(generate_pdf_bytes, "__wrapped__") else b""
-        fname = "articleiq_summary.txt"
-        mime  = "text/plain"
+    pdf_bytes = generate_pdf_bytes(
+        headline, paragraph, takeaways,
+        word_count, reading_time, topic,
+        insights, accuracy, mode_label
+    )
+    is_pdf = pdf_bytes[:4] == b"%PDF"
+    fname  = f"articleiq_{topic.lower().replace(' ','_')}_{datetime.now().strftime('%Y%m%d_%H%M')}"
+    fname += ".pdf" if is_pdf else ".txt"
+    mime   = "application/pdf" if is_pdf else "text/plain"
 
     st.download_button(
         label="⬇ Download Summary PDF",
         data=pdf_bytes,
         file_name=fname,
         mime=mime,
-        use_container_width=True
+        use_container_width=True,
+        key=f"dl_{data['time']}"
     )
 
 
 # ── MAIN LOGIC ────────────────────────────────────────────────────────────────
 
-# Map mode to prompt instructions
 MODE_INSTRUCTIONS = {
     "⚡ Quick":    "Quick mode: 1-sentence paragraph only. Exactly 3 bullet takeaways. Be very concise.",
     "📄 Standard": "Standard mode: 3-4 sentence paragraph. Exactly 5 bullet takeaways.",
@@ -693,7 +842,7 @@ if run:
     if not article.strip():
         st.warning("Please paste an article or fetch one from a URL first.")
     elif len(article.split()) < 50:
-        st.warning("The article is too short — try something with at least 50 words.")
+        st.warning("The article is too short — please provide at least 50 words.")
     else:
         progress_bar = st.progress(0)
         status = st.empty()
@@ -701,7 +850,6 @@ if run:
         status.markdown("🔍 &nbsp; **Analysing article structure…**")
         progress_bar.progress(20)
 
-        # Inject mode instructions into language passed to summarizer
         mode_hint = MODE_INSTRUCTIONS[mode]
         summary = generate_summary(article, language + f"\n\n{mode_hint}")
 
@@ -724,20 +872,19 @@ if run:
         progress_bar.empty()
 
         data = {
-            "headline": headline,
-            "paragraph": paragraph,
-            "takeaways": takeaways,
-            "word_count": word_count,
+            "headline":     headline,
+            "paragraph":    paragraph,
+            "takeaways":    takeaways,
+            "word_count":   word_count,
             "reading_time": reading_time,
-            "topic": topic,
-            "insights": insights,
-            "accuracy": accuracy,
-            "mode": mode,
-            "article": article,
-            "time": datetime.now().strftime("%b %d, %H:%M"),
+            "topic":        topic,
+            "insights":     insights,
+            "accuracy":     accuracy,
+            "mode":         mode,
+            "article":      article,
+            "time":         datetime.now().strftime("%b %d, %H:%M:%S"),
         }
 
-        # Save to history
         st.session_state.history.append(data)
         st.session_state.current_summary_data = data
 

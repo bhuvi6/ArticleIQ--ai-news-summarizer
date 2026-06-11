@@ -1,3 +1,10 @@
+```md
+<p align="center">
+  <a href="https://articleiq-ai-news.streamlit.app/">
+    <img src="https://img.shields.io/badge/🚀%20Live%20Demo-ArticleIQ-success?style=for-the-badge">
+  </a>
+</p>
+```
 
 
 
@@ -170,6 +177,14 @@ Modern white + green interface with:
 * AI insights section
 * Responsive layout
 * Clean typography
+
+```md
+## 🌐 Live Demo
+
+Try ArticleIQ live here:
+
+🔗 https://articleiq-ai-news.streamlit.app/
+```
 
 ---
 
