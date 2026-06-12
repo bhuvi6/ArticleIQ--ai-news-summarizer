@@ -1,9 +1,3 @@
-# 🧠 ArticleIQ — AI-Powered News Article Summarizer
-
-> **Multilingual news summarization platform built with Streamlit · Groq · Llama 3.3 70B**
-
-
-
 🔗 **Live Demo:** [articleiq-ai-news.streamlit.app](https://articleiq-ai-news.streamlit.app/)
 📦 **GitHub:** [github.com/Bhuvi-123/articleiq-ai-news-summarizer](https://github.com/Bhuvi-123/articleiq-ai-news-summarizer)
 
