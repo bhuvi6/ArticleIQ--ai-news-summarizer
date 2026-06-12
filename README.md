@@ -2,195 +2,201 @@
 
 > **Multilingual news summarization platform built with Streamlit · Groq · Llama 3.3 70B**
 
-**ArticleIQ** transforms lengthy news articles into fast, factual, multilingual summaries — so you stay informed without reading everything. Paste any article or drop a URL to instantly get headline summaries, paragraph briefs, key takeaways, AI insights, and factual accuracy analysis.
+
 
 🔗 **Live Demo:** [articleiq-ai-news.streamlit.app](https://articleiq-ai-news.streamlit.app/)
 📦 **GitHub:** [github.com/Bhuvi-123/articleiq-ai-news-summarizer](https://github.com/Bhuvi-123/articleiq-ai-news-summarizer)
 
 ---
 
-## ✨ Features
+# ArticleIQ — AI Research Intelligence Platform
 
-### 📰 Multi-Level Summarization
-Three structured summary layers for every article:
-- **Headline Summary** — One-line instant understanding
-- **Paragraph Summary** — Concise, factual overview
-- **Key Takeaways** — Most important points in bullet form
+> **Transform news into intelligence.** Premium multilingual article analysis powered by Groq + Llama 3.3 70B.
 
 ---
 
-### ⚡ Summary Modes
+## What It Does
 
-| Mode | Description |
-|------|-------------|
-| ⚡ Quick | Short summary + 3 concise takeaways |
-| 📄 Standard | Balanced summary + 5 takeaways |
-| 🔍 Detailed | In-depth explanation + 7 deep takeaways |
+ArticleIQ is a market-level AI research tool that goes far beyond summarization:
 
----
-
-### 🌍 Multilingual Support
-Generate summaries in:
-
-| Language | |
-|----------|-|
-| 🇬🇧 English | 🇮🇳 Telugu |
-| 🇮🇳 Hindi | 🇮🇳 Tamil |
-| 🇫🇷 French | |
-
-All translations preserve **names, dates, numbers, facts, and original meaning**.
+| Feature | Description |
+|---|---|
+| **Single Article Analysis** | Summarize any article with headline, paragraph, and key takeaways |
+| **Multi-Source Intelligence** | Compare 2–5 sources — detect agreements, contradictions, and coverage gaps |
+| **AI Accuracy Validation** | Second LLM pass compares summary vs original for factual fidelity |
+| **Source Credibility Engine** | Domain reputation scoring with AI fallback for unknown sources |
+| **Why This Matters** | Real-world impact analysis across economy, jobs, business, etc. |
+| **Topic Intelligence Feed** | Live RSS-based news feed for any topic, auto-curated |
+| **Multilingual Summaries** | English, Telugu, Hindi, Tamil, French |
+| **PDF Export** | Branded professional report with all insights |
+| **Personal Dashboard** | Session stats and recent summary history |
 
 ---
 
-### 🔗 URL-Based Article Fetching
-Skip the copy-paste. Just drop a URL:
-```
-https://newswebsite.com/article
-```
-ArticleIQ will automatically fetch the page, extract readable text, and generate a summary.
-
----
-
-### 🧠 AI Article Insights
-Get deeper intelligence beyond the summary:
-
-- **Tone Detection** — Informative / Serious / Casual / Analytical
-- **Sentiment Analysis** — Positive / Neutral / Negative
-- **Complexity Level** — Beginner / Intermediate / Advanced
-- **Target Audience** — Students / Researchers / Professionals / General Readers
-
----
-
-### 📊 Accuracy Score
-Verifies that summaries stay true to the original article by checking:
-- Numbers & statistics
-- Dates
-- Named entities
-
-> Example: **Accuracy Score: 92%** with a detailed breakdown
-
----
-
-### 📋 One-Click Copy
-Copy your **Headline Summary**, **Paragraph Summary**, or **Key Takeaways** to clipboard with a single button.
-
----
-
-### 📄 PDF Export
-Download a complete summary report as a PDF, including:
-- Summary content
-- Key takeaways
-- Article metadata
-- AI insights
-- Accuracy score
-
----
-
-### 🕘 Summary History
-Previously generated summaries are saved in the sidebar — reload any of them instantly without re-summarizing.
-
----
-
-### 🎨 Professional UI
-Clean, modern interface featuring:
-- White + green design system
-- Premium card layout
-- Metadata dashboard
-- AI insights panel
-- Responsive, readable typography
-
----
-
-## 🛠 Tech Stack
-
-| Layer | Technology |
-|-------|------------|
-| Frontend | Streamlit + Custom CSS |
-| Backend | Python |
-| AI Model | Groq API — Llama 3.3 70B Versatile |
-| PDF Generation | ReportLab |
-| Web Scraping | Requests + BeautifulSoup4 |
-
----
-
-## 📂 Project Structure
+## Project Structure
 
 ```
-ArticleIQ/
-├── app.py
-├── .env
+articleiq/
+├── app.py                        # Main Streamlit application
+├── requirements.txt              # All Python dependencies
+├── .env.example                  # Environment variable template
 ├── .gitignore
-├── requirements.txt
-├── README.md
-├── summarization_rules.json
+├── .streamlit/
+│   ├── config.toml               # Streamlit theme + server config
+│   └── secrets.toml              # API keys (local dev — DO NOT commit)
 └── utils/
-    ├── summarizer.py
-    ├── metadata.py
-    ├── article_insights.py
-    ├── accuracy_checker.py
-    ├── history_manager.py
-    └── pdf_export.py
+    ├── __init__.py
+    ├── ai_insights.py            # Tone, sentiment, complexity, "Why This Matters"
+    ├── summarizer.py             # Core summarization engine (all modes/languages)
+    ├── accuracy_validator.py     # AI-powered factual accuracy check
+    ├── credibility.py            # Source credibility scoring
+    ├── fetcher.py                # URL article fetcher (BeautifulSoup)
+    ├── multi_article.py          # Multi-source intelligence analysis
+    ├── pdf_export.py             # PDF report generation (ReportLab)
+    └── rss_monitor.py            # Topic feed via Google News RSS
 ```
 
 ---
 
-## ⚙️ Installation & Setup
+## Local Setup
 
-### 1. Clone the Repository
+### 1. Clone / download the project
+
 ```bash
-git clone https://github.com/Bhuvi-123/articleiq-ai-news-summarizer.git
-cd articleiq-ai-news-summarizer
+git clone https://github.com/your-username/articleiq.git
+cd articleiq
 ```
 
-### 2. Install Dependencies
+### 2. Create virtual environment
+
+```bash
+python -m venv venv
+
+# macOS/Linux:
+source venv/bin/activate
+
+# Windows:
+venv\Scripts\activate
+```
+
+### 3. Install dependencies
+
 ```bash
 pip install -r requirements.txt
-pip install reportlab
 ```
 
-### 3. Add Your API Key
-Create a `.env` file in the root directory:
-```
-GROQ_API_KEY=your_api_key_here
+### 4. Set environment variables
+
+```bash
+cp .env.example .env
 ```
 
-### 4. Run the App
+Open `.env` and add your Groq API key:
+
+```env
+GROQ_API_KEY=your-groq-api-key-here
+```
+
+Get a free Groq API key at: https://console.groq.com/keys
+
+### 5. Run the app
+
 ```bash
 streamlit run app.py
 ```
-The app will open automatically in your browser.
+
+The app opens at `http://localhost:8501`.
 
 ---
 
-## 👨‍💻 Team
+## Streamlit Cloud Deployment
 
-| Name | Role |
-|------|------|
-| V. Prasanna | Prompt Engineering |
-| A. Kedareswara Rao | Data & Rules |
-| V. Bhuvaneswari | Backend / API Integration |
-| K. Sai Tejesh | Testing & Deployment |
-| S. Veera Mallesh | UI / Frontend |
+### 1. Push to GitHub
+
+```bash
+git init
+git add .
+git commit -m "Initial ArticleIQ deployment"
+git remote add origin https://github.com/your-username/articleiq.git
+git push -u origin main
+```
+
+**Important:** Make sure `.gitignore` is in place so `.env` and `secrets.toml` are not committed.
+
+### 2. Deploy on Streamlit Cloud
+
+1. Go to [share.streamlit.io](https://share.streamlit.io)
+2. Click **New app**
+3. Select your repository and branch
+4. Set **Main file path** to `app.py`
+5. Click **Deploy**
+
+### 3. Configure Secrets
+
+1. In your deployed app, click **Settings → Secrets**
+2. Add:
+
+```toml
+GROQ_API_KEY = "your-groq-api-key-here"
+```
+
+3. Click **Save** — the app will restart automatically.
 
 ---
 
-## 🔮 Roadmap
+## Environment Variables Reference
 
-- [ ] 🎙 Voice Summary
-- [ ] 🌙 Dark Mode
-- [ ] 📰 Multi-Article Comparison
-- [ ] 🛡 Fake News Risk Detection
-- [ ] 📈 Trending Topics Dashboard
-- [ ] 🔍 Bias Detection
+| Variable | Required | Description |
+|---|---|---|
+| `GROQ_API_KEY` | ✅ Yes | Groq API key for LLM calls |
 
 ---
 
-## 💡 Why ArticleIQ?
+## Feature Guide
 
-News is overwhelming. ArticleIQ cuts through the noise — giving you the facts, fast, in your language. Whether you're a student, researcher, professional, or casual reader, ArticleIQ helps you stay informed without spending hours reading full articles.
+### Single Article Mode
+- Paste a URL or raw article text
+- Choose **Summary Mode**: Quick (fast), Standard (balanced), Detailed (comprehensive)
+- Choose **Language**: English, Telugu, Hindi, Tamil, French
+- Toggle optional analysis in the sidebar: Accuracy Validation, Credibility Score, Why This Matters
+- Download a professional PDF report
+
+### Multi-Source Intelligence
+- Enter 2–5 article URLs on the same story
+- ArticleIQ fetches all articles, then runs a cross-source analysis
+- Results: Unified Summary, Agreement Points, Contradiction Analysis, Sentiment per Source, Coverage Gaps, Source Breakdown
+- Each source also gets its own individual summary
+
+### Topic Feed
+- Enter any topic (e.g. "AI regulation", "Tesla", "RBI policy")
+- Get the latest news via Google News RSS
+- Click "Open" to read the full article, or copy the URL into Single Article mode
+
+### Dashboard
+- Session stats: total articles analyzed, preferred mode, top language
+- Recent summary history for this session
 
 ---
 
-## ⭐ Support the Project
+## Tech Stack
 
-If you found this useful, drop a ⭐ on [GitHub](https://github.com/Bhuvi-123/articleiq-ai-news-summarizer) — it really helps!
+| Layer | Technology |
+|---|---|
+| Framework | Streamlit |
+| LLM | Llama 3.3 70B via Groq API |
+| Scraping | Requests + BeautifulSoup4 |
+| PDF | ReportLab |
+| News Feed | Google News RSS |
+| Secrets | Streamlit Secrets / python-dotenv |
+
+---
+
+## Notes
+
+- Multi-article analysis may take 30–60 seconds depending on article length and Groq response time.
+- URL fetching works for most public news sites. Paywalled or JS-heavy sites may not extract correctly — use "Paste Article Text" as fallback.
+- All analysis is AI-generated and intended for research and informational purposes only. Always verify critical claims with primary sources.
+
+---
+
+*ArticleIQ — AI Research Intelligence Platform*
