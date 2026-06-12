@@ -1,76 +1,150 @@
+"""
+ArticleIQ — Summarization Engine
+Groq + Llama 3.3 70B powered summarization with multilingual support.
+Modes: Quick / Standard / Detailed
+Languages: English, Telugu, Hindi, Tamil, French
+"""
+
 from groq import Groq
-from dotenv import load_dotenv
 import os
-import json
-
-load_dotenv()
-
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 
-def load_rules():
-    with open("summarization_rules.json", "r") as file:
-        return json.load(file)
+def get_groq_client() -> Groq:
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise EnvironmentError("GROQ_API_KEY not set in environment or secrets.")
+    return Groq(api_key=api_key)
 
 
-def generate_summary(article: str, language: str) -> str:
+LANGUAGE_INSTRUCTIONS = {
+    "English": "Respond entirely in English.",
+    "Telugu": "Respond entirely in Telugu (తెలుగు). All output must be in Telugu script.",
+    "Hindi": "Respond entirely in Hindi (हिंदी). All output must be in Devanagari script.",
+    "Tamil": "Respond entirely in Tamil (தமிழ்). All output must be in Tamil script.",
+    "French": "Respond entirely in French. All output must be in French.",
+}
+
+MODE_CONFIGS = {
+    "Quick": {
+        "headline_words": 15,
+        "paragraph_words": 80,
+        "takeaways_count": 3,
+        "max_tokens": 400,
+    },
+    "Standard": {
+        "headline_words": 20,
+        "paragraph_words": 150,
+        "takeaways_count": 5,
+        "max_tokens": 700,
+    },
+    "Detailed": {
+        "headline_words": 25,
+        "paragraph_words": 250,
+        "takeaways_count": 7,
+        "max_tokens": 1100,
+    },
+}
+
+
+def summarize_article(
+    article: str,
+    mode: str = "Standard",
+    language: str = "English",
+) -> dict:
     """
-    Generate multilingual article summary using Groq.
-    `language` may contain mode instructions appended after a newline.
+    Summarize a news article with headline, paragraph summary, and key takeaways.
+
+    Returns dict with keys: headline, paragraph, takeaways (list[str]).
     """
-    rules = load_rules()
+    client = get_groq_client()
+    cfg = MODE_CONFIGS.get(mode, MODE_CONFIGS["Standard"])
+    lang_instruction = LANGUAGE_INSTRUCTIONS.get(language, LANGUAGE_INSTRUCTIONS["English"])
 
-    # Split language from any appended mode hint
-    parts = language.split("\n\n", 1)
-    lang_name    = parts[0].strip()
-    mode_hint    = parts[1].strip() if len(parts) > 1 else ""
+    prompt = f"""{lang_instruction}
 
-    prompt = f"""
-You are an AI News Article Summarizer.
+You are an expert news analyst. Summarize the article below.
 
-Follow these strict rules:
+Return ONLY this exact structure — no extra commentary:
 
-ACCURACY RULES:
-{rules["summarization_rules"]["accuracy_rules"]}
-
-TONE RULES:
-{rules["summarization_rules"]["tone_rules"]}
-
-CONTENT RULES:
-{rules["summarization_rules"]["content_rules"]}
-
-OUTPUT LANGUAGE:
-Generate the entire summary in this language: {lang_name}
-Translate naturally while preserving facts, dates, names, and numbers.
-Do NOT mistranslate proper nouns.
-
-SUMMARY MODE INSTRUCTIONS:
-{mode_hint if mode_hint else "Standard mode: 3-4 sentence paragraph. Exactly 5 bullet takeaways."}
-
-Output Format (use these EXACT section headers):
-
-1. One-Line Summary:
-<headline here>
-
-2. One-Paragraph Summary:
-<paragraph here>
-
-3. Key Takeaways:
-- <point 1>
-- <point 2>
-- <point 3>
-(continue per mode instructions)
+HEADLINE: <compelling headline, max {cfg['headline_words']} words>
+PARAGRAPH: <summary paragraph, approximately {cfg['paragraph_words']} words>
+TAKEAWAYS:
+- <takeaway 1>
+- <takeaway 2>
+- <takeaway 3>
+{"- <takeaway 4>" if cfg['takeaways_count'] >= 4 else ""}
+{"- <takeaway 5>" if cfg['takeaways_count'] >= 5 else ""}
+{"- <takeaway 6>" if cfg['takeaways_count'] >= 6 else ""}
+{"- <takeaway 7>" if cfg['takeaways_count'] >= 7 else ""}
 
 Article:
-{article}
+{article[:5000]}
 """
 
     try:
         completion = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.3
+            temperature=0.25,
+            max_tokens=cfg["max_tokens"],
         )
-        return completion.choices[0].message.content
+        raw = completion.choices[0].message.content.strip()
+        return _parse_summary_response(raw)
+
     except Exception as e:
-        return f"Error: {str(e)}"
+        return {
+            "headline": "Summarization failed",
+            "paragraph": f"Error: {str(e)[:200]}",
+            "takeaways": ["Please check your API key and try again."],
+        }
+
+
+def _parse_summary_response(raw: str) -> dict:
+    """Parse structured LLM response into headline, paragraph, takeaways."""
+    result = {"headline": "", "paragraph": "", "takeaways": []}
+    lines = raw.splitlines()
+    mode = None
+
+    paragraph_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        if stripped.upper().startswith("HEADLINE:"):
+            result["headline"] = stripped.split(":", 1)[-1].strip()
+            mode = None
+
+        elif stripped.upper().startswith("PARAGRAPH:"):
+            content = stripped.split(":", 1)[-1].strip()
+            if content:
+                paragraph_lines.append(content)
+            mode = "paragraph"
+
+        elif stripped.upper().startswith("TAKEAWAYS:"):
+            if paragraph_lines:
+                result["paragraph"] = " ".join(paragraph_lines)
+                paragraph_lines = []
+            mode = "takeaways"
+
+        elif mode == "paragraph":
+            paragraph_lines.append(stripped)
+
+        elif mode == "takeaways" and stripped.startswith("-"):
+            takeaway = stripped.lstrip("- ").strip()
+            if takeaway:
+                result["takeaways"].append(takeaway)
+
+    if paragraph_lines and not result["paragraph"]:
+        result["paragraph"] = " ".join(paragraph_lines)
+
+    # Fallbacks
+    if not result["headline"]:
+        result["headline"] = "Summary Generated"
+    if not result["paragraph"]:
+        result["paragraph"] = raw[:400]
+    if not result["takeaways"]:
+        result["takeaways"] = ["See paragraph summary above."]
+
+    return result

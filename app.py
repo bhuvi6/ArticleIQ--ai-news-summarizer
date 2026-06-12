@@ -1,893 +1,1014 @@
-from bs4 import BeautifulSoup
-import streamlit as st
-import re
-import json
-import io
-from datetime import datetime
-from PIL import Image
-from utils.summarizer import generate_summary
-from utils.metadata import get_word_count, get_reading_time, detect_topic
-from utils.article_insights import generate_article_insights
-import requests
+"""
+ArticleIQ — AI Research Intelligence Platform
+Premium multilingual news intelligence powered by Groq + Llama 3.3 70B.
+"""
 
-# ── Page Config ────────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="ArticleIQ — AI News Summarizer",
-    page_icon="🟢",
-    layout="wide"
-)
+import streamlit as st
+import os
+from datetime import datetime
+
+# ── Load secrets / env ────────────────────────────────────────────────────────
+try:
+    groq_key = st.secrets["GROQ_API_KEY"]
+    os.environ["GROQ_API_KEY"] = groq_key
+except Exception:
+    pass  # Fall through to dotenv or existing env
 
 try:
-    logo = Image.open("assets/logo.png")
-except Exception:
-    logo = None
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
-# ── Session State Init ─────────────────────────────────────────────────────────
-if "history" not in st.session_state:
-    st.session_state.history = []
-if "current_summary_data" not in st.session_state:
-    st.session_state.current_summary_data = None
-if "fetched_article" not in st.session_state:
-    st.session_state.fetched_article = ""
-if "active_input_source" not in st.session_state:
-    # "text" or "url" — tracks which source to use when generating
-    st.session_state.active_input_source = "text"
+# ── Utils imports ─────────────────────────────────────────────────────────────
+from utils.summarizer import summarize_article
+from utils.ai_insights import generate_article_insights, generate_why_this_matters
+from utils.accuracy_validator import validate_summary_accuracy
+from utils.credibility import get_credibility_score
+from utils.fetcher import fetch_article, fetch_multiple_articles
+from utils.multi_article import analyze_multiple_articles
+from utils.pdf_export import generate_pdf_report
+from utils.rss_monitor import fetch_topic_news
 
-# ── CSS ────────────────────────────────────────────────────────────────────────
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
+# ── Page config ───────────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="ArticleIQ — AI Research Intelligence",
+    page_icon="🔬",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-html, body { font-family: 'Inter', sans-serif; background-color: #F8FAFC; color: #111827; }
-.stApp { background: #F8FAFC; }
-#MainMenu, footer, header { visibility: hidden; }
-.block-container { padding: 0 3rem 5rem 3rem; max-width: 1100px; }
+# ── Styles ────────────────────────────────────────────────────────────────────
+def inject_css():
+    st.markdown("""
+    <style>
+    /* ── Google Font ── */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
-/* NAV */
-.nav { display:flex; align-items:center; justify-content:space-between; padding:1.4rem 0; border-bottom:1px solid #E5E7EB; margin-bottom:3rem; }
-.nav-logo { display:flex; align-items:center; gap:9px; font-size:1.15rem; font-weight:800; color:#111827; letter-spacing:-0.03em; }
-.nav-logo .dot { width:10px; height:10px; background:#16A34A; border-radius:50%; display:inline-block; box-shadow:0 0 0 3px #DCFCE7; }
-.nav-tag { font-family:'DM Mono',monospace; font-size:0.65rem; letter-spacing:0.18em; color:#6B7280; background:#F3F4F6; border:1px solid #E5E7EB; padding:4px 12px; border-radius:100px; text-transform:uppercase; }
+    /* ── Global reset ── */
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
+    }
+    .main .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 2rem;
+        max-width: 1200px;
+    }
 
-/* HERO */
-.hero { padding:0.5rem 0 2.4rem 0; }
-.hero-eyebrow { display:inline-flex; align-items:center; gap:6px; font-family:'DM Mono',monospace; font-size:0.7rem; letter-spacing:0.18em; text-transform:uppercase; color:#16A34A; background:#DCFCE7; border:1px solid #BBF7D0; padding:5px 14px; border-radius:100px; margin-bottom:1.4rem; }
-.hero-title { font-size:clamp(2.2rem,4.5vw,3.2rem); font-weight:800; line-height:1.1; letter-spacing:-0.03em; color:#111827; margin-bottom:1.1rem; }
-.hero-title em { font-style:normal; color:#16A34A; }
-.hero-sub { font-size:1rem; font-weight:400; color:#6B7280; line-height:1.65; margin-bottom:1.8rem; max-width:480px; }
-.hero-checks { display:flex; gap:1.4rem; flex-wrap:wrap; margin-bottom:0.5rem; }
-.check-item { display:flex; align-items:center; gap:7px; font-size:0.88rem; font-weight:500; color:#374151; }
-.check-icon { width:18px; height:18px; background:#DCFCE7; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:0.65rem; color:#16A34A; flex-shrink:0; }
+    /* ── Sidebar ── */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+        border-right: 1px solid #334155;
+    }
+    [data-testid="stSidebar"] * { color: #e2e8f0 !important; }
+    [data-testid="stSidebar"] .stSelectbox label,
+    [data-testid="stSidebar"] .stRadio label { color: #94a3b8 !important; font-size: 0.78rem !important; }
 
-/* INPUTS */
-.stTextArea > label, .stTextInput > label { font-size:0.78rem !important; font-weight:600 !important; color:#374151 !important; }
-.stTextArea textarea { background:#FFFFFF !important; border:1.5px solid #E5E7EB !important; border-radius:12px !important; color:#111827 !important; font-family:'Inter',sans-serif !important; font-size:0.95rem !important; line-height:1.72 !important; padding:1.1rem 1.3rem !important; box-shadow:0 1px 3px rgba(0,0,0,0.05) !important; }
-.stTextArea textarea:focus, .stTextInput input:focus { border-color:#16A34A !important; box-shadow:0 0 0 3px rgba(22,163,74,0.1) !important; outline:none !important; }
-.stTextArea textarea::placeholder, .stTextInput input::placeholder { color:#9CA3AF !important; }
-.stTextInput input { background:#FFFFFF !important; border:1.5px solid #E5E7EB !important; border-radius:12px !important; color:#111827 !important; font-size:0.95rem !important; padding:0.75rem 1rem !important; }
-.stSelectbox > label { font-size:0.78rem !important; font-weight:600 !important; color:#374151 !important; }
-.stSelectbox > div > div { background:#FFFFFF !important; border:1.5px solid #E5E7EB !important; border-radius:10px !important; color:#111827 !important; font-size:0.9rem !important; }
+    /* ── Header / hero ── */
+    .aiq-hero {
+        background: linear-gradient(135deg, #0f172a 0%, #164e35 50%, #0f172a 100%);
+        border-radius: 16px;
+        padding: 2rem 2.5rem;
+        margin-bottom: 1.8rem;
+        border: 1px solid #1e3a2b;
+        position: relative;
+        overflow: hidden;
+    }
+    .aiq-hero::before {
+        content: '';
+        position: absolute;
+        top: -60px; right: -60px;
+        width: 220px; height: 220px;
+        background: radial-gradient(circle, #16a34a22, transparent 70%);
+        border-radius: 50%;
+    }
+    .aiq-brand { font-size: 2.2rem; font-weight: 800; color: #16a34a; letter-spacing: -0.5px; margin: 0; }
+    .aiq-tagline { font-size: 0.9rem; color: #94a3b8; margin: 0.2rem 0 0; font-weight: 400; }
+    .aiq-badge {
+        display: inline-block;
+        background: #16a34a22;
+        border: 1px solid #16a34a55;
+        color: #4ade80;
+        font-size: 0.7rem;
+        font-weight: 600;
+        padding: 3px 10px;
+        border-radius: 20px;
+        margin-top: 0.8rem;
+        letter-spacing: 0.5px;
+    }
 
-/* BUTTONS */
-.stButton > button { background:#16A34A !important; color:#FFFFFF !important; font-family:'Inter',sans-serif !important; font-size:0.92rem !important; font-weight:700 !important; border:none !important; border-radius:10px !important; padding:0.78rem 2rem !important; width:100% !important; transition:all 0.18s ease !important; box-shadow:0 2px 8px rgba(22,163,74,0.25) !important; }
-.stButton > button:hover { background:#15803D !important; box-shadow:0 6px 20px rgba(22,163,74,0.3) !important; transform:translateY(-1px) !important; }
-.stDownloadButton > button { background:#1D4ED8 !important; color:#FFFFFF !important; font-family:'Inter',sans-serif !important; font-size:0.88rem !important; font-weight:600 !important; border:none !important; border-radius:10px !important; padding:0.65rem 1.5rem !important; width:100% !important; box-shadow:0 2px 8px rgba(29,78,216,0.25) !important; transition:all 0.18s ease !important; }
-.stDownloadButton > button:hover { background:#1E40AF !important; transform:translateY(-1px) !important; }
+    /* ── Glass cards ── */
+    .glass-card {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 14px;
+        padding: 1.4rem 1.6rem;
+        margin-bottom: 1.2rem;
+        backdrop-filter: blur(8px);
+    }
+    .glass-card-green {
+        background: linear-gradient(135deg, #052e1622 0%, #16a34a11 100%);
+        border: 1px solid #16a34a33;
+        border-radius: 14px;
+        padding: 1.4rem 1.6rem;
+        margin-bottom: 1.2rem;
+    }
 
-/* SECTION LABEL */
-.sec-label { display:flex; align-items:center; gap:10px; font-family:'DM Mono',monospace; font-size:0.62rem; letter-spacing:0.22em; text-transform:uppercase; color:#9CA3AF; margin:2rem 0 1.2rem 0; }
-.sec-label::before { content:''; width:6px; height:6px; background:#16A34A; border-radius:50%; flex-shrink:0; }
-.sec-label::after { content:''; flex:1; height:1px; background:#E5E7EB; }
+    /* ── Section labels ── */
+    .section-label {
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 1.8px;
+        color: #16a34a;
+        text-transform: uppercase;
+        margin-bottom: 0.5rem;
+        display: block;
+    }
+    .section-headline {
+        font-size: 1.45rem;
+        font-weight: 700;
+        color: #f1f5f9;
+        line-height: 1.4;
+        margin: 0.3rem 0 0.8rem;
+    }
 
-/* META CARDS */
-.meta-card { background:#FFFFFF; border:1px solid #E5E7EB; border-radius:14px; padding:1.2rem 1.4rem; display:flex; align-items:center; gap:14px; box-shadow:0 1px 4px rgba(0,0,0,0.05); margin-bottom:0.75rem; }
-.meta-icon { width:42px; height:42px; background:#DCFCE7; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:1.15rem; flex-shrink:0; }
-.meta-value { font-size:1.25rem; font-weight:700; color:#111827; font-family:'DM Mono',monospace; line-height:1.1; }
-.meta-key { font-size:0.72rem; font-weight:500; color:#9CA3AF; text-transform:uppercase; letter-spacing:0.08em; margin-top:2px; }
+    /* ── Insight chips ── */
+    .insight-grid { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.4rem; }
+    .insight-chip {
+        background: #0f172a;
+        border: 1px solid #1e293b;
+        border-radius: 8px;
+        padding: 0.5rem 0.9rem;
+        min-width: 110px;
+    }
+    .insight-chip-label { font-size: 0.65rem; color: #64748b; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+    .insight-chip-value { font-size: 0.95rem; color: #e2e8f0; font-weight: 600; margin-top: 2px; }
 
-/* SUMMARY CARDS */
-.headline-card { background:#FFFFFF; border:1.5px solid #BBF7D0; border-left:4px solid #16A34A; border-radius:0 16px 16px 0; padding:1.8rem 2rem; margin-bottom:1rem; box-shadow:0 2px 12px rgba(22,163,74,0.07); }
-.card-eyebrow { font-family:'DM Mono',monospace; font-size:0.62rem; letter-spacing:0.2em; text-transform:uppercase; color:#16A34A; margin-bottom:0.7rem; display:flex; align-items:center; gap:6px; }
-.headline-text { font-size:1.4rem; font-weight:700; color:#111827; line-height:1.35; letter-spacing:-0.02em; }
-.para-card { background:#FFFFFF; border:1px solid #E5E7EB; border-radius:14px; padding:1.5rem 1.8rem; margin-bottom:1rem; box-shadow:0 1px 4px rgba(0,0,0,0.04); }
-.para-text { font-size:0.97rem; color:#374151; line-height:1.78; }
-.takeaways-card { background:#FFFFFF; border:1px solid #E5E7EB; border-radius:14px; padding:1.5rem 1.8rem; margin-bottom:1rem; box-shadow:0 1px 4px rgba(0,0,0,0.04); }
-.takeaway-row { display:flex; align-items:flex-start; gap:12px; padding:0.55rem 0; border-bottom:1px solid #F3F4F6; font-size:0.94rem; color:#374151; line-height:1.55; }
-.takeaway-row:last-child { border-bottom:none; padding-bottom:0; }
-.takeaway-row:first-child { padding-top:0; }
-.tk-bullet { width:22px; height:22px; background:#DCFCE7; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:0.6rem; color:#16A34A; font-weight:800; flex-shrink:0; margin-top:1px; }
+    /* ── Score rings ── */
+    .score-block {
+        display: flex; align-items: center; gap: 1.2rem;
+        background: #0f172a;
+        border: 1px solid #1e293b;
+        border-radius: 12px;
+        padding: 1rem 1.4rem;
+        margin-top: 0.5rem;
+    }
+    .score-ring {
+        width: 64px; height: 64px;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.1rem; font-weight: 800; color: #fff;
+        flex-shrink: 0;
+    }
+    .score-ring-green { background: conic-gradient(#16a34a var(--pct), #1e293b var(--pct)); }
+    .score-meta { flex: 1; }
+    .score-title { font-size: 0.8rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.8px; }
+    .score-value { font-size: 1.6rem; font-weight: 800; color: #f1f5f9; line-height: 1.1; }
+    .score-sub { font-size: 0.78rem; color: #64748b; margin-top: 2px; }
 
-/* ACCURACY SCORE */
-.score-card { background:#FFFFFF; border:1px solid #E5E7EB; border-radius:14px; padding:1.4rem 1.8rem; margin-bottom:1rem; box-shadow:0 1px 4px rgba(0,0,0,0.04); }
-.score-bar-bg { background:#F3F4F6; border-radius:100px; height:10px; margin:0.6rem 0 0.3rem 0; overflow:hidden; }
-.score-bar-fill { height:10px; border-radius:100px; background:linear-gradient(90deg,#16A34A,#4ADE80); transition:width 0.6s ease; }
-.score-label { font-family:'DM Mono',monospace; font-size:0.72rem; color:#6B7280; letter-spacing:0.06em; }
+    /* ── Takeaway list ── */
+    .takeaway-item {
+        display: flex; align-items: flex-start; gap: 0.7rem;
+        padding: 0.6rem 0;
+        border-bottom: 1px solid #1e293b;
+    }
+    .takeaway-num {
+        background: #16a34a;
+        color: #fff;
+        font-size: 0.72rem;
+        font-weight: 700;
+        width: 22px; height: 22px;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        flex-shrink: 0;
+        margin-top: 1px;
+    }
+    .takeaway-text { font-size: 0.9rem; color: #cbd5e1; line-height: 1.5; }
 
-/* HISTORY */
-.hist-item { background:#FFFFFF; border:1px solid #E5E7EB; border-radius:10px; padding:0.8rem 1rem; margin-bottom:0.5rem; cursor:pointer; transition:all 0.15s; font-size:0.83rem; color:#374151; }
-.hist-item:hover { border-color:#16A34A; box-shadow:0 2px 8px rgba(22,163,74,0.1); }
+    /* ── Source comparison table ── */
+    .compare-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    .compare-table th {
+        background: #0f172a;
+        color: #16a34a;
+        padding: 0.6rem 0.9rem;
+        text-align: left;
+        font-size: 0.72rem;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+        border-bottom: 2px solid #16a34a33;
+    }
+    .compare-table td {
+        padding: 0.6rem 0.9rem;
+        color: #cbd5e1;
+        border-bottom: 1px solid #1e293b;
+        vertical-align: top;
+    }
+    .compare-table tr:nth-child(even) td { background: #ffffff05; }
 
-/* MODE BADGE */
-.mode-badge { display:inline-flex; align-items:center; gap:6px; font-family:'DM Mono',monospace; font-size:0.65rem; letter-spacing:0.12em; text-transform:uppercase; background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE; padding:4px 10px; border-radius:100px; margin-bottom:0.8rem; }
+    /* ── Sentiment badge ── */
+    .badge { display: inline-block; border-radius: 20px; font-size: 0.72rem; font-weight: 600; padding: 2px 10px; }
+    .badge-pos { background: #16a34a22; color: #4ade80; border: 1px solid #16a34a44; }
+    .badge-neg { background: #dc262622; color: #f87171; border: 1px solid #dc262644; }
+    .badge-neu { background: #64748b22; color: #94a3b8; border: 1px solid #64748b44; }
+    .badge-high { background: #16a34a22; color: #4ade80; border: 1px solid #16a34a44; }
+    .badge-med  { background: #d9770622; color: #fb923c; border: 1px solid #d9770644; }
+    .badge-low  { background: #dc262622; color: #f87171; border: 1px solid #dc262644; }
 
-/* ALERTS */
-.stAlert { background:#FFFBEB !important; border:1px solid #FDE68A !important; border-radius:10px !important; color:#78350F !important; }
-.stSpinner > div { border-top-color:#16A34A !important; }
-[data-testid="stMetric"] { display:none !important; }
-hr { border-color:#E5E7EB !important; }
+    /* ── Tabs ── */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 4px;
+        background: #0f172a;
+        border-radius: 10px;
+        padding: 4px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px;
+        color: #64748b;
+        font-weight: 500;
+        font-size: 0.85rem;
+        padding: 0.4rem 0.9rem;
+    }
+    .stTabs [aria-selected="true"] {
+        background: #16a34a !important;
+        color: #fff !important;
+    }
 
-/* TABS */
-.stTabs [data-baseweb="tab-list"] { gap:0.5rem; background:transparent; border-bottom:1px solid #E5E7EB; }
-.stTabs [data-baseweb="tab"] { background:#F9FAFB; border:1px solid #E5E7EB; border-bottom:none; border-radius:8px 8px 0 0; font-size:0.85rem; font-weight:600; color:#6B7280; padding:0.5rem 1.2rem; }
-.stTabs [aria-selected="true"] { background:#FFFFFF; color:#16A34A; border-color:#BBF7D0; border-bottom:2px solid #16A34A; }
+    /* ── Buttons ── */
+    .stButton > button {
+        background: linear-gradient(135deg, #16a34a, #15803d);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-weight: 600;
+        font-size: 0.875rem;
+        padding: 0.5rem 1.4rem;
+        transition: all 0.2s;
+    }
+    .stButton > button:hover {
+        background: linear-gradient(135deg, #15803d, #166534);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px #16a34a44;
+    }
 
-/* SOURCE INDICATOR */
-.source-badge { display:inline-flex; align-items:center; gap:6px; font-size:0.78rem; font-weight:600; padding:4px 12px; border-radius:100px; margin-top:0.5rem; }
-.source-url  { background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE; }
-.source-text { background:#F0FDF4; color:#166534; border:1px solid #BBF7D0; }
-</style>
-""", unsafe_allow_html=True)
+    /* ── Inputs ── */
+    .stTextArea textarea, .stTextInput input {
+        background: #0f172a !important;
+        border: 1px solid #334155 !important;
+        border-radius: 8px !important;
+        color: #e2e8f0 !important;
+        font-size: 0.875rem !important;
+    }
+    .stTextArea textarea:focus, .stTextInput input:focus {
+        border-color: #16a34a !important;
+        box-shadow: 0 0 0 2px #16a34a33 !important;
+    }
 
-# ── JS for copy to clipboard ───────────────────────────────────────────────────
-st.markdown("""
-<script>
-function copyText(text) {
-    navigator.clipboard.writeText(text).then(() => {
-        const toast = document.createElement('div');
-        toast.textContent = '✓ Copied!';
-        toast.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#16A34A;color:#fff;padding:10px 20px;border-radius:8px;font-family:Inter,sans-serif;font-size:14px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.15)';
-        document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 2000);
-    });
-}
-</script>
-""", unsafe_allow_html=True)
+    /* ── Progress / spinner ── */
+    .stSpinner > div { border-top-color: #16a34a !important; }
 
-# ── HELPERS ────────────────────────────────────────────────────────────────────
+    /* ── Footer ── */
+    .aiq-footer {
+        text-align: center;
+        padding: 1.5rem 0 0.5rem;
+        color: #334155;
+        font-size: 0.75rem;
+        border-top: 1px solid #1e293b;
+        margin-top: 2rem;
+    }
+    .aiq-footer a { color: #16a34a; text-decoration: none; }
 
-def fetch_article_from_url(url: str) -> str:
-    """
-    Fetch and extract article text from a URL using multiple strategies.
-    Handles paywalled/JS-heavy sites as gracefully as possible.
-    """
-    # Rotate through several realistic User-Agent strings
-    user_agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    ]
+    /* ── Why this matters bullets ── */
+    .wtm-item { display: flex; gap: 0.6rem; align-items: flex-start; margin: 0.4rem 0; }
+    .wtm-dot { width: 8px; height: 8px; border-radius: 50%; background: #16a34a; margin-top: 6px; flex-shrink: 0; }
+    .wtm-text { color: #cbd5e1; font-size: 0.88rem; line-height: 1.55; }
 
-    last_error = ""
+    /* ── RSS feed card ── */
+    .feed-card {
+        background: #0f172a;
+        border: 1px solid #1e293b;
+        border-radius: 10px;
+        padding: 0.9rem 1.1rem;
+        margin-bottom: 0.6rem;
+        transition: border-color 0.2s;
+    }
+    .feed-card:hover { border-color: #16a34a44; }
+    .feed-title { font-size: 0.92rem; font-weight: 600; color: #e2e8f0; }
+    .feed-meta { font-size: 0.75rem; color: #475569; margin-top: 0.2rem; }
+
+    /* ── Dark override for Streamlit elements ── */
+    .stMarkdown p { color: #cbd5e1; }
+    h1, h2, h3, h4 { color: #f1f5f9 !important; }
+    .stExpander { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+
+# ── Session state init ────────────────────────────────────────────────────────
+def init_session():
+    defaults = {
+        "history": [],
+        "current_summary": None,
+        "current_article": None,
+        "current_url": "",
+        "total_summaries": 0,
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def score_color(score: int) -> str:
+    if score >= 80:
+        return "#16a34a"
+    elif score >= 60:
+        return "#f59e0b"
+    return "#ef4444"
+
+
+def sentiment_badge(s: str) -> str:
+    s_lower = s.lower() if s else ""
+    if "positive" in s_lower:
+        return f'<span class="badge badge-pos">{s}</span>'
+    elif "negative" in s_lower:
+        return f'<span class="badge badge-neg">{s}</span>'
+    return f'<span class="badge badge-neu">{s}</span>'
+
+
+def tier_badge(tier: str) -> str:
+    tier_lower = tier.lower() if tier else ""
+    if "high" in tier_lower:
+        return f'<span class="badge badge-high">{tier}</span>'
+    elif "medium" in tier_lower:
+        return f'<span class="badge badge-med">{tier}</span>'
+    return f'<span class="badge badge-low">{tier}</span>'
+
+
+def render_score_block(score: int, label: str, sub: str = ""):
+    color = score_color(score)
+    st.markdown(f"""
+    <div class="score-block">
+        <div style="width:64px;height:64px;border-radius:50%;background:conic-gradient(
+            {color} {score * 3.6}deg, #1e293b {score * 3.6}deg);
+            display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <div style="width:48px;height:48px;border-radius:50%;background:#0f172a;
+                display:flex;align-items:center;justify-content:center;
+                font-size:0.9rem;font-weight:800;color:{color};">
+                {score}
+            </div>
+        </div>
+        <div class="score-meta">
+            <div class="score-title">{label}</div>
+            <div class="score-value">{score}<span style="font-size:1rem;color:#475569;">/100</span></div>
+            {"<div class='score-sub'>" + sub + "</div>" if sub else ""}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_takeaways(takeaways: list):
     html = ""
+    for i, t in enumerate(takeaways, 1):
+        html += f"""
+        <div class="takeaway-item">
+            <div class="takeaway-num">{i}</div>
+            <div class="takeaway-text">{t}</div>
+        </div>"""
+    st.markdown(html, unsafe_allow_html=True)
 
-    for ua in user_agents:
-        try:
-            headers = {
-                "User-Agent": ua,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Connection": "keep-alive",
-                "Upgrade-Insecure-Requests": "1",
-                "Cache-Control": "no-cache",
-                "Referer": "https://www.google.com/",
-            }
-            response = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
-            response.raise_for_status()
-            html = response.text
-            break
-        except requests.exceptions.Timeout:
-            last_error = "Request timed out (15 s). The site may be slow or blocking scrapers."
-        except requests.exceptions.HTTPError as e:
-            code = e.response.status_code
-            if code == 403:
-                last_error = f"HTTP 403 — The website blocked access (anti-scraping protection)."
-            elif code == 404:
-                last_error = "HTTP 404 — Article not found at this URL."
-            elif code == 429:
-                last_error = "HTTP 429 — Too many requests. Try again in a moment."
-            else:
-                last_error = f"HTTP {code} — Could not access this URL."
-            break   # No point retrying on HTTP errors
-        except requests.exceptions.ConnectionError:
-            last_error = "Connection error — could not reach the website."
-            break
-        except Exception as e:
-            last_error = str(e)
 
-    if not html:
-        return f"ERROR: {last_error}"
+def render_insight_chips(insights: dict):
+    st.markdown(f"""
+    <div class="insight-grid">
+        <div class="insight-chip">
+            <div class="insight-chip-label">Tone</div>
+            <div class="insight-chip-value">{insights.get('tone','—')}</div>
+        </div>
+        <div class="insight-chip">
+            <div class="insight-chip-label">Sentiment</div>
+            <div class="insight-chip-value">{insights.get('sentiment','—')}</div>
+        </div>
+        <div class="insight-chip">
+            <div class="insight-chip-label">Complexity</div>
+            <div class="insight-chip-value">{insights.get('complexity','—')}</div>
+        </div>
+        <div class="insight-chip" style="min-width:180px;">
+            <div class="insight-chip-label">Audience</div>
+            <div class="insight-chip-value">{insights.get('audience','—')}</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    soup = BeautifulSoup(html, "html.parser")
 
-    # ── Remove noise tags ──────────────────────────────────────────────────────
-    for tag in soup(["script", "style", "nav", "footer", "header", "aside",
-                     "noscript", "iframe", "figure", "figcaption",
-                     "button", "form", "input", "select"]):
-        tag.decompose()
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+def render_sidebar():
+    with st.sidebar:
+        st.markdown("""
+        <div style="padding:1rem 0 0.5rem;">
+            <div style="font-size:1.3rem;font-weight:800;color:#16a34a;">ArticleIQ</div>
+            <div style="font-size:0.72rem;color:#475569;margin-top:2px;">AI Research Intelligence</div>
+        </div>
+        <hr style="border-color:#1e293b;margin:0.6rem 0 1rem;">
+        """, unsafe_allow_html=True)
 
-    # ── Multi-strategy extraction (most specific → most general) ──────────────
-    def paras_from(element) -> str:
-        if element is None:
-            return ""
-        parts = []
-        # grab <p> tags AND bare text nodes in <div>s (BBC mediacentre style)
-        for p in element.find_all(["p", "div"], recursive=True):
-            txt = p.get_text(" ", strip=True)
-            # Skip tiny fragments, nav items, copyright notices
-            if len(txt) > 40 and not any(
-                kw in txt.lower() for kw in ["cookie", "subscribe", "sign in",
-                                              "log in", "advertisement", "©"]
-            ):
-                parts.append(txt)
-        return " ".join(parts)
+        mode = st.selectbox(
+            "Summary Mode",
+            ["Quick", "Standard", "Detailed"],
+            index=1,
+            help="Quick = fast & brief | Standard = balanced | Detailed = comprehensive"
+        )
 
+        language = st.selectbox(
+            "Output Language",
+            ["English", "Telugu", "Hindi", "Tamil", "French"],
+            index=0,
+        )
+
+        st.markdown("<hr style='border-color:#1e293b;margin:1rem 0;'>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size:0.72rem;color:#475569;font-weight:600;letter-spacing:1px;text-transform:uppercase;'>Options</div>", unsafe_allow_html=True)
+        run_accuracy = st.checkbox("AI Accuracy Validation", value=True)
+        run_credibility = st.checkbox("Source Credibility Score", value=True)
+        run_why_matters = st.checkbox("Why This Matters", value=True)
+
+        st.markdown("<hr style='border-color:#1e293b;margin:1rem 0;'>", unsafe_allow_html=True)
+
+        # History
+        if st.session_state.history:
+            st.markdown("<div style='font-size:0.72rem;color:#475569;font-weight:600;letter-spacing:1px;text-transform:uppercase;margin-bottom:0.5rem;'>Recent Summaries</div>", unsafe_allow_html=True)
+            for i, item in enumerate(reversed(st.session_state.history[-5:])):
+                headline_short = item["headline"][:42] + "…" if len(item["headline"]) > 42 else item["headline"]
+                st.markdown(f"""
+                <div style="font-size:0.78rem;color:#94a3b8;padding:0.3rem 0;
+                    border-bottom:1px solid #1e293b;cursor:pointer;">
+                    {headline_short}
+                </div>""", unsafe_allow_html=True)
+
+        st.markdown(f"""
+        <div style='margin-top:1.5rem;font-size:0.72rem;color:#334155;text-align:center;'>
+            {st.session_state.total_summaries} articles analyzed
+        </div>""", unsafe_allow_html=True)
+
+    return mode, language, run_accuracy, run_credibility, run_why_matters
+
+
+# ── Tab 1: Single Article ─────────────────────────────────────────────────────
+def tab_single_article(mode: str, language: str, run_accuracy: bool, run_credibility: bool, run_why_matters: bool):
+    st.markdown('<span class="section-label">Input</span>', unsafe_allow_html=True)
+
+    input_method = st.radio("Source", ["Paste URL", "Paste Article Text"], horizontal=True, label_visibility="collapsed")
+
+    url = ""
     article_text = ""
 
-    # Strategy 1: <article> semantic tag
-    article_tag = soup.find("article")
-    if article_tag:
-        article_text = paras_from(article_tag)
+    if input_method == "Paste URL":
+        url = st.text_input("Article URL", placeholder="https://www.reuters.com/article/...", label_visibility="collapsed")
+    else:
+        article_text = st.text_area("Article Text", placeholder="Paste the full article text here…", height=200, label_visibility="collapsed")
 
-    # Strategy 2: common CMS content wrappers
-    if len(article_text) < 300:
-        for selector in [
-            {"class": re.compile(r"article[_-]?(body|content|text)", re.I)},
-            {"class": re.compile(r"(story|post|entry)[_-]?(body|content|text)", re.I)},
-            {"class": re.compile(r"(main|page)[_-]?content", re.I)},
-            {"id":    re.compile(r"(article|story|content|main)[_-]?(body|text|content)?", re.I)},
-            {"role":  "main"},
-            {"itemprop": "articleBody"},
-        ]:
-            el = soup.find(True, selector)
-            if el:
-                candidate = paras_from(el)
-                if len(candidate) > len(article_text):
-                    article_text = candidate
-                if len(article_text) > 300:
-                    break
+    col1, col2 = st.columns([2, 8])
+    with col1:
+        analyze_btn = st.button("Analyze Article →", use_container_width=True)
 
-    # Strategy 3: largest text block by character count
-    if len(article_text) < 300:
-        candidates = []
-        for div in soup.find_all(["div", "section", "main"]):
-            txt = div.get_text(" ", strip=True)
-            if len(txt) > len(article_text):
-                candidates.append(txt)
-        if candidates:
-            article_text = max(candidates, key=len)
+    if not analyze_btn:
+        return
 
-    # Strategy 4: all <p> tags as last resort
-    if len(article_text) < 300:
-        article_text = " ".join(
-            p.get_text(" ", strip=True)
-            for p in soup.find_all("p")
-            if len(p.get_text(strip=True)) > 40
-        )
+    # Input validation
+    if input_method == "Paste URL" and not url.strip():
+        st.warning("Please enter a URL to analyze.")
+        return
+    if input_method == "Paste Article Text" and len(article_text.strip()) < 100:
+        st.warning("Please paste at least 100 characters of article text.")
+        return
 
-    # ── Clean up whitespace ────────────────────────────────────────────────────
-    article_text = re.sub(r"\s{2,}", " ", article_text).strip()
+    # Fetch if URL
+    if input_method == "Paste URL":
+        with st.spinner("Fetching article…"):
+            result = fetch_article(url.strip())
+        if not result["success"]:
+            st.error(f"Could not fetch article: {result['error']}")
+            return
+        article_text = result["content"]
+        st.session_state.current_url = url.strip()
+        st.success(f"✓ Fetched {result['word_count']:,} words from {result['title'] or url}")
+    else:
+        st.session_state.current_url = ""
 
-    if len(article_text) < 100:
-        return (
-            "ERROR: Could not extract article text from this URL. "
-            "The page may require JavaScript, be behind a paywall, "
-            "or block automated access. Try copying and pasting the article text manually."
-        )
+    st.session_state.current_article = article_text
 
-    return article_text[:8000]
+    # ── Run pipeline ─────────────────────────────────────────────
+    progress = st.progress(0, text="Starting analysis…")
 
+    with st.spinner("Generating summary…"):
+        summary = summarize_article(article_text, mode=mode, language=language)
+        progress.progress(25, text="Summary complete…")
 
-def get_active_article() -> str:
-    """
-    Return the article text to use for summarisation.
-    Priority: URL-fetched content > pasted text.
-    Uses active_input_source to know which tab the user last acted on.
-    """
-    source = st.session_state.get("active_input_source", "text")
-    url_article  = st.session_state.get("fetched_article", "").strip()
-    text_article = st.session_state.get("article_input", "").strip()
+    with st.spinner("Analyzing insights…"):
+        insights = generate_article_insights(article_text)
+        progress.progress(45, text="Insights ready…")
 
-    if source == "url" and url_article:
-        return url_article
-    if text_article:
-        return text_article
-    # Fallback: whatever is available
-    return url_article or text_article
+    accuracy_data = None
+    if run_accuracy:
+        with st.spinner("Validating accuracy…"):
+            full_summary_text = f"{summary['headline']}\n{summary['paragraph']}\n" + "\n".join(summary["takeaways"])
+            accuracy_data = validate_summary_accuracy(article_text, full_summary_text)
+            progress.progress(65, text="Accuracy validated…")
 
+    credibility_data = None
+    if run_credibility and st.session_state.current_url:
+        with st.spinner("Scoring source credibility…"):
+            credibility_data = get_credibility_score(st.session_state.current_url)
+            progress.progress(80, text="Credibility assessed…")
 
-def parse_summary(summary: str):
-    """Parse Groq output into headline, paragraph, takeaways."""
-    headline_text = ""
-    paragraph_text = ""
-    takeaways_list = []
-    current_section = None
-    para_lines = []
+    why_matters_text = None
+    if run_why_matters:
+        with st.spinner("Generating impact analysis…"):
+            why_matters_text = generate_why_this_matters(article_text, summary["paragraph"])
+            progress.progress(95, text="Almost done…")
 
-    for line in summary.splitlines():
-        s = line.strip()
-        if not s:
-            continue
-        lower_s = s.lower()
+    progress.progress(100, text="Analysis complete!")
+    progress.empty()
 
-        if ("one-line summary" in lower_s or "headline summary" in lower_s
-                or (lower_s.startswith("1.") and "summary" in lower_s)):
-            current_section = "headline"
-            if ":" in s:
-                after = s.split(":", 1)[1].strip().replace("*", "").replace("#", "")
-                if after:
-                    headline_text = after
-            continue
+    # Store history
+    st.session_state.history.append({
+        "headline": summary["headline"],
+        "timestamp": datetime.now().strftime("%H:%M"),
+        "mode": mode,
+        "language": language,
+    })
+    st.session_state.current_summary = summary
+    st.session_state.total_summaries += 1
 
-        elif ("one-paragraph summary" in lower_s or "paragraph summary" in lower_s
-              or (lower_s.startswith("2.") and "summary" in lower_s)):
-            current_section = "paragraph"
-            if ":" in s:
-                after = s.split(":", 1)[1].strip().replace("*", "").replace("#", "")
-                if after:
-                    para_lines.append(after)
-            continue
-
-        elif ("key takeaway" in lower_s
-              or (lower_s.startswith("3.") and "takeaway" in lower_s)):
-            current_section = "takeaways"
-            continue
-
-        clean = s.replace("*", "").replace("#", "").strip()
-
-        if current_section == "headline":
-            if clean and not headline_text:
-                headline_text = clean
-        elif current_section == "paragraph":
-            para_lines.append(clean)
-        elif current_section == "takeaways":
-            t = clean.lstrip("•●▪-–1234567890. ").strip()
-            if t:
-                takeaways_list.append(t)
-
-    paragraph_text = " ".join(para_lines)
-    return headline_text, paragraph_text, takeaways_list
+    # ── Render Results ────────────────────────────────────────────
+    st.markdown("---")
+    _render_single_results(
+        summary, insights, accuracy_data, credibility_data,
+        why_matters_text, article_text, mode, language, url
+    )
 
 
-def compute_accuracy_score(article: str, headline: str, paragraph: str, takeaways: list) -> dict:
-    """Check fact preservation: numbers, dates, named entities."""
-    art_numbers = set(re.findall(r'\b\d+[\d,\.]*\b', article))
-    art_dates   = set(re.findall(
-        r'\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|'
-        r'Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
-        r'\s+\d{1,2}(?:,\s*\d{4})?|\b\d{4}\b|\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b',
-        article, re.IGNORECASE
-    ))
-    art_names = set(re.findall(r'\b[A-Z][a-z]{2,}\b', article))
-
-    summary_text = f"{headline} {paragraph} {' '.join(takeaways)}"
-    sum_numbers  = set(re.findall(r'\b\d+[\d,\.]*\b', summary_text))
-    sum_dates    = set(re.findall(
-        r'\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|'
-        r'Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
-        r'\s+\d{1,2}(?:,\s*\d{4})?|\b\d{4}\b|\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b',
-        summary_text, re.IGNORECASE
-    ))
-    sum_names = set(re.findall(r'\b[A-Z][a-z]{2,}\b', summary_text))
-
-    def ratio(a_set, b_set):
-        if not a_set:
-            return 1.0
-        return min(1.0, len(a_set & b_set) / max(1, min(len(a_set), 5)))
-
-    num_score  = ratio(art_numbers, sum_numbers)
-    date_score = ratio(art_dates,   sum_dates)
-    name_score = ratio(art_names,   sum_names)
-
-    overall = int((num_score * 0.35 + date_score * 0.30 + name_score * 0.35) * 100)
-    overall = max(70, min(99, overall + 15))
-
-    return {
-        "overall": overall,
-        "numbers": int(min(100, num_score * 100 + 10)),
-        "dates":   int(min(100, date_score * 100 + 10)),
-        "names":   int(min(100, name_score * 100 + 10)),
-        "label":   "Excellent" if overall >= 90 else "Good" if overall >= 80 else "Fair"
-    }
-
-
-def generate_pdf_bytes(headline: str, paragraph: str, takeaways: list,
-                        word_count, reading_time, topic: str,
-                        insights: dict, accuracy: dict, mode: str) -> bytes:
-    """Generate a PDF; falls back to plain text if reportlab is unavailable."""
-    try:
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.units import cm
-        from reportlab.lib.colors import HexColor
-        from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
-                                        HRFlowable, Table, TableStyle)
-
-        buf = io.BytesIO()
-        doc = SimpleDocTemplate(buf, pagesize=A4,
-                                leftMargin=2.5*cm, rightMargin=2.5*cm,
-                                topMargin=2.5*cm, bottomMargin=2.5*cm)
-
-        green = HexColor("#16A34A")
-        dark  = HexColor("#111827")
-        gray  = HexColor("#6B7280")
-        light = HexColor("#F0FDF4")
-
-        title_style   = ParagraphStyle("title",   fontName="Helvetica-Bold", fontSize=22, textColor=dark,  leading=28, spaceAfter=4)
-        eyebrow_style = ParagraphStyle("eyebrow", fontName="Helvetica",      fontSize=8,  textColor=green, spaceAfter=6,  leading=12)
-        h2_style      = ParagraphStyle("h2",      fontName="Helvetica-Bold", fontSize=12, textColor=dark,  spaceBefore=14, spaceAfter=6)
-        body_style    = ParagraphStyle("body",    fontName="Helvetica",      fontSize=10, textColor=HexColor("#374151"), leading=16, spaceAfter=4)
-        bullet_style  = ParagraphStyle("bullet",  fontName="Helvetica",      fontSize=10, textColor=HexColor("#374151"), leading=16, leftIndent=14, spaceAfter=3)
-        meta_style    = ParagraphStyle("meta",    fontName="Helvetica",      fontSize=9,  textColor=gray,  leading=14)
-        small_style   = ParagraphStyle("small",   fontName="Helvetica",      fontSize=8,  textColor=gray)
-
-        story = []
-        story.append(Paragraph("ArticleIQ", eyebrow_style))
-        story.append(Paragraph(headline or "News Summary", title_style))
-        story.append(Paragraph(
-            f"Generated on {datetime.now().strftime('%B %d, %Y at %H:%M')}  ·  Mode: {mode}  ·  Topic: {topic}",
-            small_style
-        ))
-        story.append(Spacer(1, 8))
-        story.append(HRFlowable(width="100%", thickness=1.5, color=green))
-        story.append(Spacer(1, 12))
-
-        meta_data = [[
-            Paragraph(f"<b>{word_count}</b><br/>Words", meta_style),
-            Paragraph(f"<b>{reading_time}</b><br/>Read Time", meta_style),
-            Paragraph(f"<b>{topic}</b><br/>Topic", meta_style),
-            Paragraph(f"<b>{accuracy['overall']}%</b><br/>Accuracy", meta_style)
-        ]]
-        meta_table = Table(meta_data, colWidths=[4*cm, 4*cm, 5*cm, 4*cm])
-        meta_table.setStyle(TableStyle([
-            ("BACKGROUND", (0,0), (-1,-1), light),
-            ("FONTSIZE",   (0,0), (-1,-1), 9),
-            ("ALIGN",      (0,0), (-1,-1), "CENTER"),
-            ("VALIGN",     (0,0), (-1,-1), "MIDDLE"),
-            ("TOPPADDING", (0,0), (-1,-1), 10),
-            ("BOTTOMPADDING", (0,0), (-1,-1), 10),
-        ]))
-        story.append(meta_table)
-        story.append(Spacer(1, 16))
-
-        story.append(Paragraph("PARAGRAPH SUMMARY", h2_style))
-        story.append(HRFlowable(width="100%", thickness=0.5, color=HexColor("#E5E7EB")))
-        story.append(Spacer(1, 6))
-        story.append(Paragraph(paragraph or "—", body_style))
-        story.append(Spacer(1, 14))
-
-        story.append(Paragraph("KEY TAKEAWAYS", h2_style))
-        story.append(HRFlowable(width="100%", thickness=0.5, color=HexColor("#E5E7EB")))
-        story.append(Spacer(1, 6))
-        for i, t in enumerate(takeaways, 1):
-            story.append(Paragraph(f"{i}.  {t}", bullet_style))
-        story.append(Spacer(1, 14))
-
-        story.append(Paragraph("ARTICLE INSIGHTS", h2_style))
-        story.append(HRFlowable(width="100%", thickness=0.5, color=HexColor("#E5E7EB")))
-        story.append(Spacer(1, 6))
-        ins_data = [
-            ["Tone",       insights.get("tone",       "—"), "Sentiment", insights.get("sentiment", "—")],
-            ["Complexity", insights.get("complexity", "—"), "Audience",  insights.get("audience",  "—")],
-        ]
-        ins_table = Table(ins_data, colWidths=[3*cm, 6*cm, 3*cm, 5*cm])
-        ins_table.setStyle(TableStyle([
-            ("FONTSIZE",  (0,0), (-1,-1), 9),
-            ("TEXTCOLOR", (0,0), (0,-1),  green),
-            ("TEXTCOLOR", (2,0), (2,-1),  green),
-            ("FONTNAME",  (0,0), (0,-1),  "Helvetica-Bold"),
-            ("FONTNAME",  (2,0), (2,-1),  "Helvetica-Bold"),
-            ("TOPPADDING",    (0,0), (-1,-1), 5),
-            ("BOTTOMPADDING", (0,0), (-1,-1), 5),
-            ("LINEBELOW", (0,0), (-1,0),  0.5, HexColor("#E5E7EB")),
-        ]))
-        story.append(ins_table)
-        story.append(Spacer(1, 14))
-
-        story.append(Paragraph("ACCURACY SCORE", h2_style))
-        story.append(HRFlowable(width="100%", thickness=0.5, color=HexColor("#E5E7EB")))
-        story.append(Spacer(1, 6))
-        story.append(Paragraph(
-            f"Overall: <b>{accuracy['overall']}% ({accuracy['label']})</b>  ·  "
-            f"Numbers: {accuracy['numbers']}%  ·  "
-            f"Dates: {accuracy['dates']}%  ·  "
-            f"Names: {accuracy['names']}%",
-            body_style
-        ))
-
-        story.append(Spacer(1, 20))
-        story.append(HRFlowable(width="100%", thickness=0.5, color=HexColor("#E5E7EB")))
-        story.append(Spacer(1, 4))
-        story.append(Paragraph(
-            "Generated by ArticleIQ · AI News Summarizer · Powered by Groq Llama 3.3 70B",
-            small_style
-        ))
-
-        doc.build(story)
-        return buf.getvalue()
-
-    except ImportError:
-        lines = [
-            "ARTICLEIQ — AI NEWS SUMMARY",
-            f"Generated: {datetime.now().strftime('%B %d, %Y at %H:%M')}",
-            f"Mode: {mode} | Topic: {topic} | Words: {word_count} | Read Time: {reading_time}",
-            "=" * 60,
-            "",
-            "HEADLINE",
-            headline or "—",
-            "",
-            "PARAGRAPH SUMMARY",
-            paragraph or "—",
-            "",
-            "KEY TAKEAWAYS",
-        ] + [f"  {i+1}. {t}" for i, t in enumerate(takeaways)] + [
-            "",
-            "ARTICLE INSIGHTS",
-            f"  Tone: {insights.get('tone','—')}",
-            f"  Sentiment: {insights.get('sentiment','—')}",
-            f"  Complexity: {insights.get('complexity','—')}",
-            f"  Audience: {insights.get('audience','—')}",
-            "",
-            f"ACCURACY SCORE: {accuracy['overall']}% ({accuracy['label']})",
-            f"  Numbers: {accuracy['numbers']}%  Dates: {accuracy['dates']}%  Names: {accuracy['names']}%",
-        ]
-        return "\n".join(lines).encode("utf-8")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# UI
-# ─────────────────────────────────────────────────────────────────────────────
-
-# NAV
-st.markdown("""
-<div class="nav">
-  <div class="nav-logo"><span class="dot"></span>ArticleIQ</div>
-  <span class="nav-tag">AI News Summarizer</span>
-</div>
-""", unsafe_allow_html=True)
-
-# HERO
-st.markdown("""
-<div class="hero">
-  <div class="hero-eyebrow">✦ Powered by Groq · Llama 3.3 70B</div>
-  <h1 class="hero-title">Summarize News.<br><em>Understand Faster.</em></h1>
-  <p class="hero-sub">Paste any article or drop a URL — get an instant AI-powered brief with accuracy scoring, PDF export, and full history.</p>
-  <div class="hero-checks">
-    <div class="check-item"><div class="check-icon">✓</div> Real Summary Modes</div>
-    <div class="check-item"><div class="check-icon">✓</div> URL Fetching</div>
-    <div class="check-item"><div class="check-icon">✓</div> PDF Download</div>
-    <div class="check-item"><div class="check-icon">✓</div> Accuracy Score</div>
-    <div class="check-item"><div class="check-icon">✓</div> History</div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-# ── SIDEBAR: HISTORY ──────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("""
-    <div style="font-family:'DM Mono',monospace;font-size:0.7rem;letter-spacing:0.18em;
-                text-transform:uppercase;color:#6B7280;margin-bottom:1rem;padding-top:0.5rem;">
-        📋 Summary History
+def _render_single_results(summary, insights, accuracy_data, credibility_data,
+                            why_matters_text, article_text, mode, language, url):
+    # ── Headline card ─────────────────────────────────────────────
+    st.markdown(f"""
+    <div class="glass-card-green">
+        <span class="section-label">Headline</span>
+        <div class="section-headline">{summary['headline']}</div>
     </div>
     """, unsafe_allow_html=True)
 
-    if not st.session_state.history:
-        st.markdown("""
-        <div style="font-size:0.82rem;color:#9CA3AF;text-align:center;padding:2rem 0;">
-            No summaries yet.<br>Generate one to see history.
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        for i, item in enumerate(reversed(st.session_state.history)):
-            idx = len(st.session_state.history) - 1 - i
-            label = item["headline"][:45] + "…" if len(item["headline"]) > 45 else item["headline"]
-            if st.button(
-                f"📰 {label}",
-                key=f"hist_{idx}",
-                help=f"{item['topic']} · {item['time']}"
-            ):
-                # FIX: set data AND rerun so the result panel refreshes immediately
-                st.session_state.current_summary_data = item
-                st.rerun()
+    # ── Two-column layout ─────────────────────────────────────────
+    col_left, col_right = st.columns([3, 2], gap="large")
 
-        st.markdown("<hr style='border-color:#E5E7EB;margin:1rem 0'>", unsafe_allow_html=True)
-        if st.button("🗑 Clear History", key="clear_hist"):
-            st.session_state.history = []
-            st.session_state.current_summary_data = None
-            st.rerun()
+    with col_left:
+        # Summary paragraph
+        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+        st.markdown('<span class="section-label">Summary</span>', unsafe_allow_html=True)
+        st.markdown(f'<p style="color:#cbd5e1;line-height:1.7;font-size:0.92rem;">{summary["paragraph"]}</p>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-# ── INPUT ZONE ────────────────────────────────────────────────────────────────
-col_input, col_side = st.columns([2, 1], gap="large")
+        # Key takeaways
+        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+        st.markdown('<span class="section-label">Key Takeaways</span>', unsafe_allow_html=True)
+        render_takeaways(summary["takeaways"])
+        st.markdown('</div>', unsafe_allow_html=True)
 
-with col_input:
-    input_tab, url_tab = st.tabs(["📝 Paste Article", "🔗 Paste URL"])
-
-    with input_tab:
-        article_text = st.text_area(
-            "Article text",
-            height=240,
-            placeholder="Paste a news article here — the more text, the richer the summary…",
-            key="article_input"
-        )
-        # When user types here, mark text as the active source
-        if article_text.strip():
-            st.session_state.active_input_source = "text"
-
-    with url_tab:
-        url_input = st.text_input(
-            "Article URL",
-            placeholder="https://example.com/news/article",
-            key="url_input"
-        )
-
-        if st.button("🔄 Fetch Article", key="fetch_btn"):
-            if url_input.strip():
-                # Clear any previously fetched content first
-                st.session_state.fetched_article = ""
-                st.session_state.active_input_source = "text"
-                with st.spinner("Fetching article… (this may take up to 15 seconds)"):
-                    fetched = fetch_article_from_url(url_input.strip())
-                if fetched.startswith("ERROR:"):
-                    # Strip the "ERROR:" prefix for a cleaner display
-                    err_msg = fetched[len("ERROR:"):].strip()
-                    st.error(f"⚠️ {err_msg}")
-                    st.info(
-                        "💡 **Tip:** Some websites (BBC, NYT, etc.) block automated access. "
-                        "Try opening the article in your browser, selecting all text (Ctrl+A), "
-                        "copying it (Ctrl+C), then pasting into the **Paste Article** tab."
-                    )
+        # Why this matters
+        if why_matters_text:
+            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+            st.markdown('<span class="section-label">Why This Matters</span>', unsafe_allow_html=True)
+            import re
+            lines = why_matters_text.strip().split("\n")
+            html = ""
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                # Convert **bold** markdown
+                line = re.sub(r"\*\*(.+?)\*\*", r"<strong style='color:#4ade80;'>\1</strong>", line)
+                if line.startswith("- ") or line.startswith("• "):
+                    line = line.lstrip("- •").strip()
+                    html += f'<div class="wtm-item"><div class="wtm-dot"></div><div class="wtm-text">{line}</div></div>'
                 else:
-                    st.session_state.fetched_article = fetched
-                    st.session_state.active_input_source = "url"
-                    word_count_fetched = len(fetched.split())
-                    st.success(f"✅ Fetched **{word_count_fetched} words** from URL. Ready to summarise!")
-            else:
-                st.warning("Please enter a URL first.")
+                    html += f'<div class="wtm-text" style="margin-bottom:0.3rem;">{line}</div>'
+            st.markdown(html, unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
 
-        # Show preview only when there's fetched content
-        if st.session_state.fetched_article:
-            preview_text = st.session_state.fetched_article
-            preview = preview_text[:600] + "…" if len(preview_text) > 600 else preview_text
-            st.text_area(
-                "Fetched content (preview)",
-                value=preview,
-                height=130,
-                disabled=True,
-                key="fetched_preview"
+    with col_right:
+        # AI Insights
+        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+        st.markdown('<span class="section-label">AI Insights</span>', unsafe_allow_html=True)
+        render_insight_chips(insights)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # Credibility
+        if credibility_data:
+            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+            st.markdown('<span class="section-label">Source Credibility</span>', unsafe_allow_html=True)
+            render_score_block(
+                credibility_data["score"],
+                "Source Reliability",
+                f"{credibility_data['label']} · {credibility_data['domain']}"
             )
-            st.markdown(
-                '<span class="source-badge source-url">🔗 Using URL article for next summary</span>',
-                unsafe_allow_html=True
+            st.markdown(f"""
+            <div style="margin-top:0.6rem;">
+                {tier_badge(credibility_data['tier'])}
+                <p style="color:#64748b;font-size:0.8rem;margin-top:0.4rem;">{credibility_data['explanation']}</p>
+            </div>
+            """, unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        # Accuracy
+        if accuracy_data:
+            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+            st.markdown('<span class="section-label">AI Accuracy Validation</span>', unsafe_allow_html=True)
+            render_score_block(
+                accuracy_data["score"],
+                "Factual Accuracy",
+                f"Confidence: {accuracy_data['confidence']} · Hallucination Risk: {accuracy_data['hallucination_risk']}"
             )
+            if accuracy_data.get("explanation"):
+                st.markdown(f'<p style="color:#64748b;font-size:0.8rem;margin-top:0.5rem;">{accuracy_data["explanation"]}</p>', unsafe_allow_html=True)
+            if accuracy_data.get("missing_info"):
+                st.markdown('<span style="font-size:0.72rem;color:#475569;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;">Missing Info</span>', unsafe_allow_html=True)
+                for item in accuracy_data["missing_info"]:
+                    st.markdown(f'<div class="wtm-item"><div class="wtm-dot" style="background:#f59e0b;"></div><div class="wtm-text">{item}</div></div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
 
-with col_side:
-    st.markdown("<div style='height:2.3rem'></div>", unsafe_allow_html=True)
+        # PDF Export
+        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+        st.markdown('<span class="section-label">Export</span>', unsafe_allow_html=True)
+        try:
+            pdf_bytes = generate_pdf_report(
+                headline=summary["headline"],
+                paragraph=summary["paragraph"],
+                takeaways=summary["takeaways"],
+                insights=insights,
+                accuracy=accuracy_data,
+                credibility=credibility_data,
+                why_matters=why_matters_text,
+                source_url=url or "",
+                language=language,
+                mode=mode,
+            )
+            st.download_button(
+                label="⬇ Download PDF Report",
+                data=pdf_bytes,
+                file_name=f"articleiq_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+        except Exception as e:
+            st.caption(f"PDF generation error: {e}")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    mode = st.selectbox(
-        "Summary Mode",
-        ["⚡ Quick", "📄 Standard", "🔍 Detailed"],
-        index=1,
-        key="summary_mode"
-    )
 
-    language = st.selectbox(
-        "Output Language",
-        ["🇬🇧 English", "🇮🇳 Telugu", "🇮🇳 Hindi", "🇮🇳 Tamil", "🇫🇷 French"],
-        index=0,
-        key="language_selector"
-    )
-
-    st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
-
-    mode_info = {
-        "⚡ Quick":    "1 headline · 1-sentence brief · 3 key points",
-        "📄 Standard": "1 headline · 3–4 sentence brief · 5 key points",
-        "🔍 Detailed": "1 headline · full paragraph · 7 deep takeaways",
-    }
-    st.markdown(f"""
-    <div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:10px;
-                padding:0.9rem 1rem;font-size:0.82rem;color:#166534;line-height:1.6;">
-      <strong>📌 {mode}</strong><br>{mode_info[mode]}
+# ── Tab 2: Multi-Article Intelligence ─────────────────────────────────────────
+def tab_multi_article(mode: str, language: str):
+    st.markdown("""
+    <div class="glass-card-green" style="margin-bottom:1rem;">
+        <span class="section-label">Multi-Article Intelligence Mode</span>
+        <div style="color:#94a3b8;font-size:0.88rem;margin-top:0.3rem;">
+            Compare 2–5 sources on the same story. Detect agreements, contradictions, and
+            coverage gaps — then get a unified intelligence brief.
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown("<div style='height:0.6rem'></div>", unsafe_allow_html=True)
+    num_articles = st.slider("Number of articles to compare", min_value=2, max_value=5, value=2)
 
-    run = st.button("🟢 Generate Summary", use_container_width=True, key="run_btn")
+    urls = []
+    for i in range(num_articles):
+        u = st.text_input(
+            f"Source {i + 1} URL",
+            placeholder=f"https://source{i+1}.com/article…",
+            key=f"multi_url_{i}"
+        )
+        urls.append(u.strip())
 
-# ── RENDER RESULT ─────────────────────────────────────────────────────────────
-def render_summary_data(data: dict):
-    headline     = data["headline"]
-    paragraph    = data["paragraph"]
-    takeaways    = data["takeaways"]
-    word_count   = data["word_count"]
-    reading_time = data["reading_time"]
-    topic        = data["topic"]
-    insights     = data["insights"]
-    accuracy     = data["accuracy"]
-    mode_label   = data["mode"]
+    col1, _ = st.columns([2, 8])
+    with col1:
+        compare_btn = st.button("Run Intelligence Analysis →", use_container_width=True)
 
-    st.markdown(f'<div class="mode-badge">Mode: {mode_label}</div>', unsafe_allow_html=True)
+    if not compare_btn:
+        return
 
-    # ── AI ARTICLE INSIGHTS ──
-    st.markdown('<div class="sec-label">AI Article Insights</div>', unsafe_allow_html=True)
-    i1, i2 = st.columns(2)
-    with i1:
+    valid_urls = [u for u in urls if u.startswith("http")]
+    if len(valid_urls) < 2:
+        st.warning("Please enter at least 2 valid URLs (starting with http/https).")
+        return
+
+    # Fetch all articles
+    with st.spinner(f"Fetching {len(valid_urls)} articles…"):
+        fetch_results = fetch_multiple_articles(valid_urls)
+
+    failed = [r for r in fetch_results if not r["success"]]
+    successful = [r for r in fetch_results if r["success"]]
+
+    if failed:
+        for f in failed:
+            st.warning(f"⚠ Could not fetch: {f['url'][:60]}… — {f['error']}")
+
+    if len(successful) < 2:
+        st.error("Need at least 2 successfully fetched articles to compare.")
+        return
+
+    articles_for_analysis = [
+        {"url": r["url"], "content": r["content"], "title": r["title"]}
+        for r in successful
+    ]
+
+    # Run multi-article intelligence
+    with st.spinner("Running cross-source intelligence analysis… (this may take 30–60 seconds)"):
+        analysis = analyze_multiple_articles(articles_for_analysis)
+
+    if analysis.get("error") and not analysis.get("unified_summary"):
+        st.error(f"Analysis failed: {analysis['error']}")
+        return
+
+    # ── Render multi-article results ──────────────────────────────
+    st.markdown("---")
+
+    # What Actually Happened — flagship card
+    st.markdown(f"""
+    <div class="glass-card-green">
+        <span class="section-label">What Actually Happened</span>
+        <div class="section-headline" style="font-size:1.15rem;">{analysis.get('what_actually_happened', 'See unified summary below.')}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Tabs for sections
+    t_unified, t_agree, t_contra, t_sentiment, t_sources = st.tabs([
+        "Unified Summary", "Agreements", "Contradictions", "Sentiment", "Source Breakdown"
+    ])
+
+    with t_unified:
+        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+        st.markdown(f'<p style="color:#cbd5e1;line-height:1.75;font-size:0.92rem;">{analysis.get("unified_summary", "")}</p>', unsafe_allow_html=True)
+
+        # Missing coverage
+        missing = analysis.get("missing_coverage", [])
+        if missing:
+            st.markdown('<span class="section-label" style="margin-top:1rem;display:block;">Coverage Gaps Detected</span>', unsafe_allow_html=True)
+            for item in missing:
+                st.markdown(f'<div class="wtm-item"><div class="wtm-dot" style="background:#f59e0b;"></div><div class="wtm-text">{item}</div></div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with t_agree:
+        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+        st.markdown('<span class="section-label">Points of Agreement</span>', unsafe_allow_html=True)
+        agreements = analysis.get("agreement_points", [])
+        if agreements:
+            for i, ag in enumerate(agreements, 1):
+                st.markdown(f"""
+                <div class="takeaway-item">
+                    <div class="takeaway-num" style="background:#16a34a;">✓</div>
+                    <div class="takeaway-text">{ag}</div>
+                </div>""", unsafe_allow_html=True)
+        else:
+            st.markdown('<p style="color:#64748b;">No clear agreements detected across sources.</p>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # Viewpoint differences
+        vp_diffs = analysis.get("viewpoint_differences", [])
+        if vp_diffs:
+            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+            st.markdown('<span class="section-label">Framing Differences</span>', unsafe_allow_html=True)
+            for item in vp_diffs:
+                st.markdown(f'<div class="wtm-item"><div class="wtm-dot" style="background:#8b5cf6;"></div><div class="wtm-text">{item}</div></div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    with t_contra:
+        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+        st.markdown('<span class="section-label">Contradiction Analysis</span>', unsafe_allow_html=True)
+        contradictions = analysis.get("contradictions", [])
+        if contradictions:
+            for c in contradictions:
+                st.markdown(f"""
+                <div style="background:#0f172a;border:1px solid #dc262633;border-radius:10px;
+                    padding:0.9rem 1.1rem;margin-bottom:0.7rem;">
+                    <div style="font-size:0.8rem;font-weight:700;color:#f87171;margin-bottom:0.4rem;">
+                        ⚡ {c.get('claim','Disputed claim')}
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.8rem;margin-top:0.4rem;">
+                        <div style="font-size:0.82rem;color:#94a3b8;">
+                            <span style="color:#64748b;font-size:0.7rem;font-weight:600;text-transform:uppercase;">Version A</span><br>
+                            {c.get('source_a','—')}
+                        </div>
+                        <div style="font-size:0.82rem;color:#94a3b8;">
+                            <span style="color:#64748b;font-size:0.7rem;font-weight:600;text-transform:uppercase;">Version B</span><br>
+                            {c.get('source_b','—')}
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.markdown('<p style="color:#64748b;">No direct contradictions found. Sources are broadly consistent.</p>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with t_sentiment:
+        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+        st.markdown('<span class="section-label">Source Sentiment & Bias</span>', unsafe_allow_html=True)
+        sentiments = analysis.get("sentiment_by_source", [])
+        if sentiments:
+            html = """<table class="compare-table">
+                <thead><tr>
+                    <th>Source</th><th>Sentiment</th><th>Political Lean</th>
+                </tr></thead><tbody>"""
+            for s in sentiments:
+                sent_badge = sentiment_badge(s.get("sentiment", "—"))
+                html += f"""<tr>
+                    <td style="font-weight:600;">{s.get('source','—')}</td>
+                    <td>{sent_badge}</td>
+                    <td style="color:#94a3b8;">{s.get('bias_lean','Unknown')}</td>
+                </tr>"""
+            html += "</tbody></table>"
+            st.markdown(html, unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with t_sources:
+        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+        st.markdown('<span class="section-label">Per-Source Breakdown</span>', unsafe_allow_html=True)
+        comparisons = analysis.get("source_comparison", [])
+        if comparisons:
+            html = """<table class="compare-table">
+                <thead><tr>
+                    <th>Source</th><th>Coverage Focus</th><th>Tone</th><th>Key Claims</th>
+                </tr></thead><tbody>"""
+            for s in comparisons:
+                claims = "; ".join(s.get("key_claims", []))
+                html += f"""<tr>
+                    <td style="font-weight:600;">{s.get('source','—')}</td>
+                    <td>{s.get('coverage_focus','—')}</td>
+                    <td style="color:#94a3b8;">{s.get('tone','—')}</td>
+                    <td style="color:#64748b;font-size:0.8rem;">{claims}</td>
+                </tr>"""
+            html += "</tbody></table>"
+            st.markdown(html, unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # Individual article summaries (collapsible)
+    st.markdown("---")
+    st.markdown('<span class="section-label">Individual Summaries</span>', unsafe_allow_html=True)
+    for i, art in enumerate(successful, 1):
+        with st.expander(f"Source {i}: {art.get('title','Article')[:60]}"):
+            with st.spinner(f"Summarizing Source {i}…"):
+                s = summarize_article(art["content"], mode=mode, language=language)
+            st.markdown(f"**{s['headline']}**")
+            st.markdown(f'<p style="color:#94a3b8;font-size:0.88rem;">{s["paragraph"]}</p>', unsafe_allow_html=True)
+            render_takeaways(s["takeaways"])
+
+
+# ── Tab 3: Topic Intelligence Feed ───────────────────────────────────────────
+def tab_topic_feed():
+    st.markdown("""
+    <div class="glass-card-green" style="margin-bottom:1rem;">
+        <span class="section-label">Topic Intelligence Feed</span>
+        <div style="color:#94a3b8;font-size:0.88rem;margin-top:0.3rem;">
+            Enter any topic to get a live feed of the latest news, auto-curated and ready to summarize.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2 = st.columns([4, 2])
+    with col1:
+        topic = st.text_input("Topic", placeholder="e.g. AI, Tesla, RBI policy, Startups, Quantum Computing…", label_visibility="collapsed")
+    with col2:
+        max_items = st.selectbox("Articles", [3, 5, 8, 10], index=1, label_visibility="collapsed")
+
+    fetch_btn = st.button("Fetch Latest News →", use_container_width=False)
+
+    if not fetch_btn or not topic.strip():
+        return
+
+    with st.spinner(f"Fetching latest news on '{topic}'…"):
+        articles = fetch_topic_news(topic.strip(), max_articles=max_items)
+
+    if not articles:
+        st.warning("No articles found. Try a different topic.")
+        return
+
+    st.markdown(f'<span class="section-label">Latest: {topic}</span>', unsafe_allow_html=True)
+
+    for art in articles:
+        if art.get("error") and not art.get("title"):
+            st.error(f"Feed error: {art['error']}")
+            continue
+
+        col_main, col_action = st.columns([6, 1])
+        with col_main:
+            st.markdown(f"""
+            <div class="feed-card">
+                <div class="feed-title">{art.get('title','No title')}</div>
+                <div class="feed-meta">{art.get('source','Unknown')} · {art.get('published','')}</div>
+                {f"<div style='color:#475569;font-size:0.78rem;margin-top:0.3rem;'>{art.get('snippet','')}</div>" if art.get('snippet') else ""}
+            </div>
+            """, unsafe_allow_html=True)
+        with col_action:
+            if art.get("url"):
+                st.markdown(f'<a href="{art["url"]}" target="_blank" style="font-size:0.75rem;color:#16a34a;text-decoration:none;">Open ↗</a>', unsafe_allow_html=True)
+
+
+# ── Tab 4: Dashboard ─────────────────────────────────────────────────────────
+def tab_dashboard():
+    total = st.session_state.total_summaries
+    history = st.session_state.history
+
+    st.markdown("""
+    <div class="glass-card-green">
+        <span class="section-label">Personal Dashboard</span>
+        <div style="color:#94a3b8;font-size:0.88rem;margin-top:0.2rem;">Your ArticleIQ research session at a glance.</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
         st.markdown(f"""
-        <div class="meta-card"><div class="meta-icon">🎭</div><div>
-          <div class="meta-value" style="font-size:1rem;">{insights.get("tone","—")}</div>
-          <div class="meta-key">Tone</div></div></div>
-        <div class="meta-card"><div class="meta-icon">🧠</div><div>
-          <div class="meta-value" style="font-size:1rem;">{insights.get("complexity","—")}</div>
-          <div class="meta-key">Complexity</div></div></div>
-        """, unsafe_allow_html=True)
-    with i2:
+        <div class="glass-card" style="text-align:center;">
+            <div style="font-size:2.5rem;font-weight:800;color:#16a34a;">{total}</div>
+            <div style="color:#64748b;font-size:0.78rem;text-transform:uppercase;letter-spacing:1px;">Articles Analyzed</div>
+        </div>""", unsafe_allow_html=True)
+    with col2:
+        modes = [h["mode"] for h in history]
+        top_mode = max(set(modes), key=modes.count) if modes else "—"
         st.markdown(f"""
-        <div class="meta-card"><div class="meta-icon">📊</div><div>
-          <div class="meta-value" style="font-size:1rem;">{insights.get("sentiment","—")}</div>
-          <div class="meta-key">Sentiment</div></div></div>
-        <div class="meta-card"><div class="meta-icon">👥</div><div>
-          <div class="meta-value" style="font-size:0.9rem;">{insights.get("audience","—")}</div>
-          <div class="meta-key">Target Audience</div></div></div>
-        """, unsafe_allow_html=True)
+        <div class="glass-card" style="text-align:center;">
+            <div style="font-size:2.5rem;font-weight:800;color:#16a34a;">{top_mode}</div>
+            <div style="color:#64748b;font-size:0.78rem;text-transform:uppercase;letter-spacing:1px;">Preferred Mode</div>
+        </div>""", unsafe_allow_html=True)
+    with col3:
+        langs = [h["language"] for h in history]
+        top_lang = max(set(langs), key=langs.count) if langs else "—"
+        st.markdown(f"""
+        <div class="glass-card" style="text-align:center;">
+            <div style="font-size:2.5rem;font-weight:800;color:#16a34a;">{top_lang}</div>
+            <div style="color:#64748b;font-size:0.78rem;text-transform:uppercase;letter-spacing:1px;">Top Language</div>
+        </div>""", unsafe_allow_html=True)
 
-    # ── ARTICLE INTELLIGENCE ──
-    st.markdown('<div class="sec-label">Article Intelligence</div>', unsafe_allow_html=True)
-    m1, m2, m3 = st.columns(3, gap="small")
-    m1.markdown(f'<div class="meta-card"><div class="meta-icon">📄</div><div><div class="meta-value">{word_count}</div><div class="meta-key">Words</div></div></div>', unsafe_allow_html=True)
-    m2.markdown(f'<div class="meta-card"><div class="meta-icon">⏱</div><div><div class="meta-value">{reading_time}</div><div class="meta-key">Read Time</div></div></div>', unsafe_allow_html=True)
-    m3.markdown(f'<div class="meta-card"><div class="meta-icon">🏷</div><div><div class="meta-value" style="font-size:1rem;">{topic}</div><div class="meta-key">Topic</div></div></div>', unsafe_allow_html=True)
-
-    # ── ACCURACY SCORE ──
-    st.markdown('<div class="sec-label">Accuracy Score</div>', unsafe_allow_html=True)
-    bar_color = "#16A34A" if accuracy["overall"] >= 85 else "#F59E0B" if accuracy["overall"] >= 75 else "#EF4444"
-    st.markdown(f"""
-    <div class="score-card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.3rem;">
-        <span style="font-weight:700;font-size:1.1rem;color:#111827;">
-          {accuracy['overall']}% <span style="font-size:0.85rem;color:#16A34A;font-weight:600;">{accuracy['label']}</span>
-        </span>
-        <span class="score-label">Overall Fact Preservation</span>
-      </div>
-      <div class="score-bar-bg"><div class="score-bar-fill" style="width:{accuracy['overall']}%;background:{bar_color};"></div></div>
-      <div style="display:flex;gap:1.5rem;margin-top:0.6rem;">
-        <span class="score-label">🔢 Numbers: <strong>{accuracy['numbers']}%</strong></span>
-        <span class="score-label">📅 Dates: <strong>{accuracy['dates']}%</strong></span>
-        <span class="score-label">👤 Names: <strong>{accuracy['names']}%</strong></span>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── GENERATED BRIEF ──
-    st.markdown('<div class="sec-label">Generated Brief</div>', unsafe_allow_html=True)
-
-    # Headline
-    st.markdown(f"""
-    <div class="headline-card">
-      <div class="card-eyebrow">📰 Headline Summary</div>
-      <div class="headline-text">{headline or "—"}</div>
-    </div>
-    """, unsafe_allow_html=True)
-    c1, _ = st.columns([1, 5])
-    with c1:
-        if st.button("📋 Copy", key=f"copy_hl_{data['time']}", help="Copy headline"):
-            st.write(f'<script>copyText({json.dumps(headline)})</script>', unsafe_allow_html=True)
-            st.toast("Headline copied!", icon="✓")
-
-    # Paragraph
-    st.markdown(f"""
-    <div class="para-card">
-      <div class="card-eyebrow" style="color:#6B7280;">📄 Paragraph Summary</div>
-      <div class="para-text">{paragraph or "—"}</div>
-    </div>
-    """, unsafe_allow_html=True)
-    c1, _ = st.columns([1, 5])
-    with c1:
-        if st.button("📋 Copy", key=f"copy_para_{data['time']}", help="Copy paragraph"):
-            st.write(f'<script>copyText({json.dumps(paragraph)})</script>', unsafe_allow_html=True)
-            st.toast("Paragraph copied!", icon="✓")
-
-    # Takeaways
-    takeaways_html = "".join(
-        f'<div class="takeaway-row"><div class="tk-bullet">✓</div><span>{item}</span></div>'
-        for item in takeaways
-    ) or '<div class="takeaway-row"><div class="tk-bullet">—</div><span>No takeaways generated.</span></div>'
-
-    st.markdown(f"""
-    <div class="takeaways-card">
-      <div class="card-eyebrow" style="color:#6B7280;">📌 Key Takeaways</div>
-      {takeaways_html}
-    </div>
-    """, unsafe_allow_html=True)
-    c1, _ = st.columns([1, 5])
-    with c1:
-        if st.button("📋 Copy", key=f"copy_tk_{data['time']}", help="Copy takeaways"):
-            tk_text = "\n".join(f"{i+1}. {t}" for i, t in enumerate(takeaways))
-            st.write(f'<script>copyText({json.dumps(tk_text)})</script>', unsafe_allow_html=True)
-            st.toast("Takeaways copied!", icon="✓")
-
-    # ── PDF EXPORT ──
-    st.markdown('<div class="sec-label">Export</div>', unsafe_allow_html=True)
-    pdf_bytes = generate_pdf_bytes(
-        headline, paragraph, takeaways,
-        word_count, reading_time, topic,
-        insights, accuracy, mode_label
-    )
-    is_pdf = pdf_bytes[:4] == b"%PDF"
-    fname  = f"articleiq_{topic.lower().replace(' ','_')}_{datetime.now().strftime('%Y%m%d_%H%M')}"
-    fname += ".pdf" if is_pdf else ".txt"
-    mime   = "application/pdf" if is_pdf else "text/plain"
-
-    st.download_button(
-        label="⬇ Download Summary PDF",
-        data=pdf_bytes,
-        file_name=fname,
-        mime=mime,
-        use_container_width=True,
-        key=f"dl_{data['time']}"
-    )
-
-
-# ── MAIN LOGIC ────────────────────────────────────────────────────────────────
-
-MODE_INSTRUCTIONS = {
-    "⚡ Quick":    "Quick mode: 1-sentence paragraph only. Exactly 3 bullet takeaways. Be very concise.",
-    "📄 Standard": "Standard mode: 3-4 sentence paragraph. Exactly 5 bullet takeaways.",
-    "🔍 Detailed": "Detailed mode: full rich paragraph (5-6 sentences). Exactly 7 bullet takeaways with context.",
-}
-
-if run:
-    article = get_active_article()
-
-    if not article.strip():
-        st.warning("Please paste an article or fetch one from a URL first.")
-    elif len(article.split()) < 50:
-        st.warning("The article is too short — please provide at least 50 words.")
+    if history:
+        st.markdown('<span class="section-label" style="margin-top:1.5rem;display:block;">Recent Summaries</span>', unsafe_allow_html=True)
+        for item in reversed(history[-10:]):
+            st.markdown(f"""
+            <div class="feed-card">
+                <div class="feed-title">{item['headline']}</div>
+                <div class="feed-meta">{item['timestamp']} · {item['mode']} · {item['language']}</div>
+            </div>""", unsafe_allow_html=True)
     else:
-        progress_bar = st.progress(0)
-        status = st.empty()
+        st.markdown('<p style="color:#475569;text-align:center;padding:2rem;">Analyze your first article to see your dashboard.</p>', unsafe_allow_html=True)
 
-        status.markdown("🔍 &nbsp; **Analysing article structure…**")
-        progress_bar.progress(20)
 
-        mode_hint = MODE_INSTRUCTIONS[mode]
-        summary = generate_summary(article, language + f"\n\n{mode_hint}")
+# ── Main app ──────────────────────────────────────────────────────────────────
+def main():
+    inject_css()
+    init_session()
 
-        progress_bar.progress(55)
-        status.markdown("📡 &nbsp; **Extracting key signals…**")
+    # Check API key
+    if not os.getenv("GROQ_API_KEY"):
+        st.error("⚠ GROQ_API_KEY not configured. Add it to Streamlit secrets or your .env file.")
+        st.info("Set it in `.streamlit/secrets.toml` as:\n\n```toml\nGROQ_API_KEY = 'your-key-here'\n```")
+        st.stop()
 
-        word_count   = get_word_count(article)
-        reading_time = get_reading_time(article)
-        topic        = detect_topic(article)
-        insights     = generate_article_insights(article)
+    # Sidebar controls
+    mode, language, run_accuracy, run_credibility, run_why_matters = render_sidebar()
 
-        progress_bar.progress(75)
-        status.markdown("🧮 &nbsp; **Computing accuracy score…**")
+    # Hero header
+    st.markdown("""
+    <div class="aiq-hero">
+        <div class="aiq-brand">ArticleIQ</div>
+        <div class="aiq-tagline">AI Research Intelligence Platform — Powered by Llama 3.3 70B</div>
+        <div class="aiq-badge">🔬 RESEARCH GRADE · MULTILINGUAL · MULTI-SOURCE</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-        headline, paragraph, takeaways = parse_summary(summary)
-        accuracy = compute_accuracy_score(article, headline, paragraph, takeaways)
+    # Main tabs
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "🔍 Single Article",
+        "⚡ Multi-Source Intelligence",
+        "📡 Topic Feed",
+        "📊 Dashboard",
+    ])
 
-        progress_bar.progress(100)
-        status.empty()
-        progress_bar.empty()
+    with tab1:
+        tab_single_article(mode, language, run_accuracy, run_credibility, run_why_matters)
 
-        data = {
-            "headline":     headline,
-            "paragraph":    paragraph,
-            "takeaways":    takeaways,
-            "word_count":   word_count,
-            "reading_time": reading_time,
-            "topic":        topic,
-            "insights":     insights,
-            "accuracy":     accuracy,
-            "mode":         mode,
-            "article":      article,
-            "time":         datetime.now().strftime("%b %d, %H:%M:%S"),
-        }
+    with tab2:
+        tab_multi_article(mode, language)
 
-        st.session_state.history.append(data)
-        st.session_state.current_summary_data = data
+    with tab3:
+        tab_topic_feed()
 
-# ── RENDER ────────────────────────────────────────────────────────────────────
-if st.session_state.current_summary_data:
-    render_summary_data(st.session_state.current_summary_data)
+    with tab4:
+        tab_dashboard()
+
+    # Footer
+    st.markdown("""
+    <div class="aiq-footer">
+        ArticleIQ · AI Research Intelligence Platform ·
+        Powered by <a href="https://groq.com" target="_blank">Groq</a> &
+        <a href="https://www.llama.com" target="_blank">Llama 3.3 70B</a> ·
+        Built for research and informational purposes only.
+    </div>
+    """, unsafe_allow_html=True)
+
+
+if __name__ == "__main__":
+    main()

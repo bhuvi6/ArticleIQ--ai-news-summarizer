@@ -1,5 +1,19 @@
-streamlit
-python-dotenv
-groq
-beautifulsoup4
-requests
+# ArticleIQ — AI Research Intelligence Platform
+# requirements.txt — Streamlit Cloud compatible
+
+# ── Core framework ────────────────────────────────────────────────────────────
+streamlit>=1.35.0
+
+# ── AI / LLM ─────────────────────────────────────────────────────────────────
+groq>=0.9.0
+
+# ── Web scraping ──────────────────────────────────────────────────────────────
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=5.2.0
+
+# ── PDF generation ────────────────────────────────────────────────────────────
+reportlab>=4.1.0
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0
